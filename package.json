@@ -1,0 +1,26 @@
+{
+  "name": "nodebp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TobikUwU/NodeBP.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/TobikUwU/NodeBP/issues"
+  },
+  "homepage": "https://github.com/TobikUwU/NodeBP#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "gltf-pipeline": "^4.3.0",
+    "multer": "^2.0.2"
+  }
+}
