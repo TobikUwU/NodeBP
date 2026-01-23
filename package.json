@@ -23,6 +23,7 @@
     "adm-zip": "^0.5.16",
     "express": "^5.2.1",
     "gltf-pipeline": "^4.3.0",
+    "gltfpack": "^1.0.0",
     "multer": "^2.0.2",
     "obj2gltf": "^3.2.0"
   }
