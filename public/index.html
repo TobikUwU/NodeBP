@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="cs">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Správce 3D Modelů</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+        />
+        <style>
+            body {
+                background-color: #f8f9fa;
+            }
+        </style>
+    </head>
+    <body>
+        <main class="container mt-5">
+            <div class="text-center mb-4">
+                <h1 class="display-5">Správce 3D Modelů</h1>
+                <p class="lead">
+                    Nahrávejte, konvertujte a balte vaše 3D modely s texturami
+                    do jednoho souboru.
+                </p>
+            </div>
+
+            <section class="card mb-5 shadow-sm border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="h5 mb-0">1. Nahrát a zabalit ZIP balíček</h2>
+                </div>
+                <div class="card-body">
+                    <p>
+                        Nejlepší volba pro modely s texturami. Vložte
+                        <code>.gltf</code> soubor, <code>.bin</code> a všechny
+                        textury do jednoho <strong>ZIP archivu</strong> a ten
+                        zde nahrajte. Aplikace ho rozbalí, spojí, zkomprimuje
+                        (Draco) a uloží jako jeden <code>.glb</code> soubor.
+                    </p>
+                    <form id="packageUploadForm">
+                        <div class="input-group">
+                            <input
+                                class="form-control"
+                                type="file"
+                                id="packageFile"
+                                name="packageZip"
+                                required
+                                accept=".zip"
+                            />
+                            <button type="submit" class="btn btn-primary">
+                                Nahrát a zabalit ZIP
+                            </button>
+                        </div>
+                    </form>
+                    <div id="packageUploadStatus" class="mt-3"></div>
+                </div>
+            </section>
+
+            <section class="card mb-5 shadow-sm">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">
+                        2. Nahrát a uložit jednotlivý soubor
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <p>
+                        Pro rychlou konverzi jednoho souboru bez textur (např.
+                        <code>.obj</code>). Soubor se zkonvertuje a uloží.
+                    </p>
+                    <form id="uploadForm">
+                        <div class="input-group">
+                            <input
+                                class="form-control"
+                                type="file"
+                                id="modelFile"
+                                name="model"
+                                required
+                            />
+                            <button type="submit" class="btn btn-info">
+                                Nahrát a uložit
+                            </button>
+                        </div>
+                    </form>
+                    <div id="uploadStatus" class="mt-3"></div>
+                </div>
+            </section>
+
+            <section class="card mb-5 shadow-sm">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">3. Zabalit model z disku serveru</h2>
+                </div>
+                <div class="card-body">
+                    <p>
+                        Zadejte cestu k <code>.gltf</code> souboru, který se již
+                        nachází na serveru. Aplikace ho zabalí i s texturami a
+                        zkomprimuje.
+                    </p>
+                    <form id="packForm">
+                        <div class="input-group">
+                            <input
+                                class="form-control"
+                                type="text"
+                                id="packPath"
+                                placeholder="např. models4use/..."
+                                required
+                            />
+                            <button type="submit" class="btn btn-secondary">
+                                Zabalit a komprimovat
+                            </button>
+                        </div>
+                    </form>
+                    <div id="packStatus" class="mt-3"></div>
+                </div>
+            </section>
+
+            <section class="card shadow-sm">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">4. Dostupné modely</h2>
+                </div>
+                <div class="card-body">
+                    <p>Modely v této sekci jsou připraveny ke stažení.</p>
+                    <ul id="modelList" class="list-group">
+                        <li class="list-group-item">Načítání...</li>
+                    </ul>
+                </div>
+            </section>
+
+            <footer class="text-center text-muted mt-5 pb-3">
+                <p>&copy; 2024 Model Converter</p>
+            </footer>
+        </main>
+
+        <script>
+            const modelListEl = document.getElementById("modelList");
+            const uploadForm = document.getElementById("uploadForm");
+            const modelFileInput = document.getElementById("modelFile");
+            const uploadStatusEl = document.getElementById("uploadStatus");
+            const packForm = document.getElementById("packForm");
+            const packPathInput = document.getElementById("packPath");
+            const packStatusEl = document.getElementById("packStatus");
+            const packageUploadForm =
+                document.getElementById("packageUploadForm");
+            const packageFileInput = document.getElementById("packageFile");
+            const packageUploadStatusEl = document.getElementById(
+                "packageUploadStatus",
+            );
+
+            async function fetchAndDisplayModels() {
+                modelListEl.innerHTML =
+                    '<li class="list-group-item">Načítání...</li>';
+                try {
+                    const response = await fetch("/models");
+                    if (!response.ok)
+                        throw new Error(
+                            `Server vrátil chybu: ${response.status}`,
+                        );
+                    const models = await response.json();
+                    modelListEl.innerHTML = "";
+                    if (models.length === 0) {
+                        modelListEl.innerHTML =
+                            '<li class="list-group-item text-muted">Ve složce <code>public/models</code> nebyly nalezeny žádné .glb modely.</li>';
+                    } else {
+                        models.sort().forEach((modelName) => {
+                            const li = document.createElement("li");
+                            li.className =
+                                "list-group-item d-flex justify-content-between align-items-center";
+                            const modelText = document.createElement("span");
+                            modelText.textContent = modelName;
+                            const downloadLink = document.createElement("a");
+                            downloadLink.href = `/models/${modelName}`;
+                            downloadLink.className = "btn btn-success btn-sm";
+                            downloadLink.textContent = "Stáhnout";
+                            downloadLink.setAttribute("download", modelName);
+                            li.appendChild(modelText);
+                            li.appendChild(downloadLink);
+                            modelListEl.appendChild(li);
+                        });
+                    }
+                } catch (error) {
+                    modelListEl.innerHTML = `<li class="list-group-item list-group-item-danger">Nepodařilo se načíst seznam modelů. ${error.message}</li>`;
+                }
+            }
+
+            packageUploadForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const file = packageFileInput.files[0];
+                if (!file) {
+                    packageUploadStatusEl.innerHTML =
+                        '<div class="alert alert-warning">Nebyl vybrán žádný ZIP soubor.</div>';
+                    return;
+                }
+                const formData = new FormData();
+                formData.append("packageZip", file);
+                packageUploadStatusEl.innerHTML =
+                    '<div class="alert alert-info">Nahrávám ZIP a zpracovávám, prosím čekejte, může to trvat déle...</div>';
+                try {
+                    const response = await fetch("/upload-packaged", {
+                        method: "POST",
+                        body: formData,
+                    });
+                    const result = await response.json();
+                    if (!response.ok)
+                        throw new Error(
+                            result.message ||
+                                `Chyba serveru: ${response.status}`,
+                        );
+                    packageUploadStatusEl.innerHTML = `<div class="alert alert-success">${result.message}</div>`;
+                    fetchAndDisplayModels();
+                } catch (error) {
+                    packageUploadStatusEl.innerHTML = `<div class="alert alert-danger"><strong>Chyba při zpracování balíčku:</strong> ${error.message}</div>`;
+                } finally {
+                    packageUploadForm.reset();
+                }
+            });
+
+            uploadForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const file = modelFileInput.files[0];
+                if (!file) {
+                    uploadStatusEl.innerHTML =
+                        '<div class="alert alert-warning">Nebyl vybrán žádný soubor.</div>';
+                    return;
+                }
+                const formData = new FormData();
+                formData.append("model", file);
+                uploadStatusEl.innerHTML =
+                    '<div class="alert alert-info">Nahrávám a konvertuji soubor, prosím čekejte...</div>';
+                try {
+                    const response = await fetch("/upload", {
+                        method: "POST",
+                        body: formData,
+                    });
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(
+                            errorText || `Chyba serveru: ${response.status}`,
+                        );
+                    }
+                    const result = await response.json();
+                    uploadStatusEl.innerHTML = `<div class="alert alert-success">${result.message}</div>`;
+                    fetchAndDisplayModels();
+                } catch (error) {
+                    uploadStatusEl.innerHTML = `<div class="alert alert-danger"><strong>Chyba při nahrávání:</strong> ${error.message}</div>`;
+                } finally {
+                    uploadForm.reset();
+                }
+            });
+
+            packForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const inputPath = packPathInput.value.trim();
+                if (!inputPath) {
+                    packStatusEl.innerHTML =
+                        '<div class="alert alert-warning">Zadejte prosím cestu k .gltf souboru.</div>';
+                    return;
+                }
+                packStatusEl.innerHTML =
+                    '<div class="alert alert-info">Zpracovávám model na serveru, prosím čekejte...</div>';
+                try {
+                    const response = await fetch("/pack-model", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ inputPath: inputPath }),
+                    });
+                    const result = await response.json();
+                    if (!response.ok)
+                        throw new Error(
+                            result.message ||
+                                `Chyba serveru: ${response.status}`,
+                        );
+                    packStatusEl.innerHTML = `<div class="alert alert-success">${result.message}</div>`;
+                    fetchAndDisplayModels();
+                } catch (error) {
+                    packStatusEl.innerHTML = `<div class="alert alert-danger"><strong>Chyba při balení:</strong> ${error.message}</div>`;
+                }
+            });
+
+            document.addEventListener(
+                "DOMContentLoaded",
+                fetchAndDisplayModels,
+            );
+        </script>
+    </body>
+</html>

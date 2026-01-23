@@ -137,3 +137,9 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# User-uploaded 3D models
+/public/models/
+
+# Another directory for models to be ignored
+models4use
