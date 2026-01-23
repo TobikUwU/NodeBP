@@ -143,3 +143,5 @@ vite.config.ts.timestamp-*
 
 # Another directory for models to be ignored
 models4use
+
+tmp_uploads
