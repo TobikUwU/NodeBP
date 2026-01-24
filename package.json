@@ -20,6 +20,9 @@
   },
   "homepage": "https://github.com/TobikUwU/NodeBP#readme",
   "dependencies": {
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0",
     "adm-zip": "^0.5.16",
     "express": "^5.2.1",
     "gltf-pipeline": "^4.3.0",
