@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 models4use
 
 tmp_uploads
+
+public/chunks
+public/metadata
