@@ -5,7 +5,7 @@ const fs = require("fs");
 const gltfPipeline = require("gltf-pipeline");
 const gltfToGlb = gltfPipeline.gltfToGlb;
 const AdmZip = require("adm-zip");
-const sharp = require("sharp"); // npm install sharp
+const sharp = require("sharp");
 
 const app = express();
 const port = 3000;
