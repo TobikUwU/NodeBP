@@ -148,3 +148,5 @@ tmp_uploads
 
 public/chunks
 public/metadata
+public/previews
+.claude
