@@ -36,25 +36,22 @@ const UPLOAD_DIR = "./tmp_uploads";
 const MODELS_DIR = path.join(__dirname, "public", "models");
 const CHUNKS_DIR = path.join(__dirname, "public", "chunks");
 const METADATA_DIR = path.join(__dirname, "public", "metadata");
-const PREVIEWS_DIR = path.join(__dirname, "public", "previews");
 const CHUNK_SIZE = 1024 * 1024; // 1 MB chunks
 
 // Vytvoření potřebných složek
 console.log("📁 Vytvářím složky...");
-[UPLOAD_DIR, MODELS_DIR, CHUNKS_DIR, METADATA_DIR, PREVIEWS_DIR].forEach(
-  (dir) => {
-    try {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-        console.log(`  ✅ ${dir}`);
-      } else {
-        console.log(`  ⏭️  ${dir} už existuje`);
-      }
-    } catch (err) {
-      console.error(`  ❌ Chyba při vytváření ${dir}:`, err.message);
+[UPLOAD_DIR, MODELS_DIR, CHUNKS_DIR, METADATA_DIR].forEach((dir) => {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`  ✅ ${dir}`);
+    } else {
+      console.log(`  ⏭️  ${dir} už existuje`);
     }
-  },
-);
+  } catch (err) {
+    console.error(`  ❌ Chyba při vytváření ${dir}:`, err.message);
+  }
+});
 
 // Middleware
 app.use(express.static(path.join(__dirname, "public")));
@@ -328,174 +325,6 @@ async function optimizeTextures(gltfPath, resourceDir) {
 }
 
 // ============================================================================
-// PREVIEW GENERATION - Low quality GLB for quick loading
-// ============================================================================
-
-async function generatePreview(gltfPath, resourceDir, modelName) {
-  console.log("\n--- Generování preview ---");
-
-  const previewName = `${modelName}_preview.glb`;
-  const previewPath = path.join(PREVIEWS_DIR, previewName);
-
-  try {
-    // Načti GLTF - použij deep copy aby se neměnil originál
-    const gltfContent = await fsp.readFile(gltfPath, "utf8");
-    const originalGltf = JSON.parse(gltfContent);
-    const previewGltf = JSON.parse(JSON.stringify(originalGltf));
-
-    // Optimalizuj textury pro preview - menší rozlišení a nižší kvalita (paralelně)
-    if (previewGltf.images && previewGltf.images.length > 0) {
-      console.log(
-        `  📸 Optimalizuji ${previewGltf.images.length} textur pro preview (paralelně)...`,
-      );
-
-      const textureTasks = previewGltf.images.map(async (image) => {
-        if (!image.uri) return;
-
-        const imagePath = path.join(resourceDir, image.uri);
-
-        try {
-          await fsp.access(imagePath);
-        } catch {
-          return;
-        }
-
-        const ext = path.extname(imagePath).toLowerCase();
-        const baseName = path.basename(imagePath, ext);
-        const previewTexturePath = path.join(
-          resourceDir,
-          `${baseName}_preview.jpg`,
-        );
-
-        try {
-          const imgMeta = await sharp(imagePath).metadata();
-
-          // Preview textury: max 256px, nízká kvalita
-          const maxSize = Math.min(256, imgMeta.width, imgMeta.height);
-
-          await sharp(imagePath)
-            .resize(maxSize, maxSize, {
-              fit: "inside",
-              withoutEnlargement: true,
-            })
-            .jpeg({
-              quality: 50,
-              mozjpeg: true,
-              chromaSubsampling: "4:2:0",
-            })
-            .toFile(previewTexturePath);
-
-          // Update pouze preview GLTF reference (ne originál)
-          image.uri = `${baseName}_preview.jpg`;
-          image.mimeType = "image/jpeg";
-        } catch (err) {
-          console.error(
-            `  ⚠️ Chyba při vytváření preview textury ${imagePath}:`,
-            err.message,
-          );
-        }
-      });
-
-      await Promise.all(textureTasks);
-    }
-
-    // Agresivnější Draco komprese pro preview
-    const options = {
-      resourceDirectory: resourceDir,
-      dracoOptions: {
-        compressionLevel: 10,
-        quantizePositionBits: 8, // Nižší přesnost pro menší soubor
-        quantizeNormalBits: 6,
-        quantizeTexcoordBits: 8,
-        quantizeColorBits: 6,
-        quantizeGenericBits: 6,
-        unifiedQuantization: true,
-      },
-    };
-
-    const results = await gltfToGlb(previewGltf, options);
-
-    // Zapisuj GLB a GZIP paralelně
-    const previewSizeMB = (results.glb.length / 1024 / 1024).toFixed(2);
-    const gzipPath = previewPath + ".gz";
-    const compressed = await gzip(results.glb, { level: 9 });
-
-    await Promise.all([
-      fsp.writeFile(previewPath, results.glb),
-      fsp.writeFile(gzipPath, compressed),
-    ]);
-
-    console.log(`  ✅ Preview vytvořen: ${previewName} (${previewSizeMB} MB)`);
-
-    const compressedSizeMB = (compressed.length / 1024 / 1024).toFixed(2);
-    console.log(`  🗜️  Preview GZIP: ${compressedSizeMB} MB`);
-
-    return {
-      previewName,
-      previewPath,
-      previewSizeInMB: parseFloat(previewSizeMB),
-      compressedSizeInMB: parseFloat(compressedSizeMB),
-    };
-  } catch (err) {
-    console.error("  ❌ Chyba při generování preview:", err.message);
-    return null;
-  }
-}
-
-// Generování preview z existujícího GLB souboru
-async function generatePreviewFromGlb(glbPath, modelName) {
-  console.log(`\n📸 Generování preview z GLB: ${modelName}`);
-
-  const previewName = `${modelName.replace(".glb", "")}_preview.glb`;
-  const previewPath = path.join(PREVIEWS_DIR, previewName);
-
-  // Pokud preview už existuje, přeskoč
-  try {
-    const stats = await fsp.stat(previewPath);
-    console.log(
-      `  ⏭️  Preview již existuje (${(stats.size / 1024 / 1024).toFixed(2)} MB)`,
-    );
-    return {
-      previewName,
-      previewPath,
-      previewSizeInMB: parseFloat((stats.size / 1024 / 1024).toFixed(2)),
-    };
-  } catch {
-    // Preview neexistuje, pokračuj ve vytváření
-  }
-
-  try {
-    // Pro existující GLB nemůžeme snadno re-optimalizovat textury,
-    // tak jen zkopírujeme soubor a použijeme GZIP kompresi
-    // V praxi by bylo lepší mít preview předgenerované při uploadu
-
-    const glbData = await fsp.readFile(glbPath);
-
-    // GZIP komprese
-    const gzipPath = previewPath + ".gz";
-    const compressed = await gzip(glbData, { level: 9 });
-
-    // Zapisuj oba soubory paralelně
-    await Promise.all([
-      fsp.copyFile(glbPath, previewPath),
-      fsp.writeFile(gzipPath, compressed),
-    ]);
-
-    const sizeMB = (glbData.length / 1024 / 1024).toFixed(2);
-    console.log(`  ✅ Preview vytvořen: ${previewName} (${sizeMB} MB)`);
-
-    return {
-      previewName,
-      previewPath,
-      previewSizeInMB: parseFloat(sizeMB),
-    };
-  } catch (err) {
-    console.error("  ❌ Chyba při generování preview z GLB:", err.message);
-    return null;
-  }
-}
-
-// ============================================================================
 // UPLOAD ENDPOINT
 // ============================================================================
 
@@ -551,17 +380,10 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
     const outputName = `${modelName}.glb`;
     const outputPath = path.join(MODELS_DIR, outputName);
 
-    console.log("\n--- KROK 1: Generování preview (před optimalizací) ---");
-    const previewResult = await generatePreview(
-      gltfFilePath,
-      resourceDir,
-      modelName,
-    );
-
-    console.log("\n--- KROK 2: Optimalizace textur pro plnou kvalitu ---");
+    console.log("\n--- KROK 1: Optimalizace textur ---");
     const gltf = await optimizeTextures(gltfFilePath, resourceDir);
 
-    console.log("--- KROK 3: Draco komprese a balení ---");
+    console.log("--- KROK 2: Draco komprese a balení ---");
     const options = {
       resourceDirectory: resourceDir,
       dracoOptions: {
@@ -580,7 +402,7 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
 
     const finalSizeMB = (results.glb.length / 1024 / 1024).toFixed(2);
 
-    console.log("\n--- KROK 4: Vytváření chunků ---");
+    console.log("\n--- KROK 3: Vytváření chunků ---");
     const metadata = await createChunks(outputPath, outputName);
 
     console.log("\n" + "=".repeat(60));
@@ -588,11 +410,6 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
     console.log(`📦 Model: ${outputName}`);
     console.log(`💾 Velikost: ${finalSizeMB} MB`);
     console.log(`📦 Chunky: ${metadata.totalChunks}`);
-    if (previewResult) {
-      console.log(
-        `👁️  Preview: ${previewResult.previewName} (${previewResult.previewSizeInMB} MB)`,
-      );
-    }
     console.log("=".repeat(60) + "\n");
 
     cleanup();
@@ -601,9 +418,6 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
       success: true,
       message: `Model ${outputName} byl úspěšně zpracován.`,
       fileName: outputName,
-      hasPreview: previewResult !== null,
-      previewName: previewResult?.previewName || null,
-      previewSizeInMB: previewResult?.previewSizeInMB || 0,
       sizeInMB: parseFloat(finalSizeMB),
       path: `/models/${outputName}`,
       chunked: true,
@@ -729,23 +543,6 @@ app.get("/models", async (req, res) => {
         // Metadata neexistují
       }
 
-      // Kontrola preview
-      const modelBaseName = file.replace(".glb", "");
-      const previewName = `${modelBaseName}_preview.glb`;
-      const previewPath = path.join(PREVIEWS_DIR, previewName);
-      let hasPreview = false;
-      let previewSizeInMB = 0;
-
-      try {
-        const previewStats = await fsp.stat(previewPath);
-        hasPreview = true;
-        previewSizeInMB = parseFloat(
-          (previewStats.size / 1024 / 1024).toFixed(2),
-        );
-      } catch {
-        // Preview neexistuje
-      }
-
       return {
         name: file,
         size: stats.size,
@@ -754,9 +551,6 @@ app.get("/models", async (req, res) => {
         modified: stats.mtime,
         chunked,
         totalChunks,
-        hasPreview,
-        previewName: hasPreview ? previewName : null,
-        previewSizeInMB,
       };
     });
 
@@ -780,57 +574,6 @@ app.get("/models", async (req, res) => {
 // ============================================================================
 // DOWNLOAD ENDPOINT
 // ============================================================================
-
-// Download preview (podporuje GZIP)
-app.get("/download-preview/:previewName", async (req, res) => {
-  const previewName = req.params.previewName;
-  const previewPath = path.join(PREVIEWS_DIR, previewName);
-  const gzipPath = previewPath + ".gz";
-
-  try {
-    const stat = await fsp.stat(previewPath);
-    const fileSize = stat.size;
-    const etag = `"preview-${fileSize}-${stat.mtime.getTime()}"`;
-
-    res.setHeader("ETag", etag);
-    res.setHeader("Cache-Control", "public, max-age=31536000");
-
-    if (req.headers["if-none-match"] === etag) {
-      return res.status(304).end();
-    }
-
-    // Zkontroluj, zda klient podporuje gzip
-    const acceptEncoding = req.headers["accept-encoding"] || "";
-
-    try {
-      const gzipStats = await fsp.stat(gzipPath);
-      if (acceptEncoding.includes("gzip")) {
-        console.log(`📤 Sending compressed preview: ${previewName}`);
-
-        res.setHeader("Content-Encoding", "gzip");
-        res.setHeader("Content-Type", "model/gltf-binary");
-        res.setHeader("X-Original-Size", fileSize);
-        res.setHeader("X-Compressed-Size", gzipStats.size);
-
-        return res.sendFile(gzipPath);
-      }
-    } catch {
-      // Gzip neexistuje
-    }
-
-    console.log(`📤 Sending uncompressed preview: ${previewName}`);
-
-    res.setHeader("Content-Type", "model/gltf-binary");
-    res.setHeader("Content-Length", fileSize);
-
-    fs.createReadStream(previewPath).pipe(res);
-  } catch {
-    return res.status(404).json({
-      success: false,
-      message: "Preview nebyl nalezen.",
-    });
-  }
-});
 
 app.get("/download-model/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -907,23 +650,6 @@ app.get("/model-info/:modelName", async (req, res) => {
       // Metadata neexistují
     }
 
-    // Preview info
-    const modelBaseName = modelName.replace(".glb", "");
-    const previewName = `${modelBaseName}_preview.glb`;
-    const previewPath = path.join(PREVIEWS_DIR, previewName);
-    let hasPreview = false;
-    let previewSizeInMB = 0;
-
-    try {
-      const previewStats = await fsp.stat(previewPath);
-      hasPreview = true;
-      previewSizeInMB = parseFloat(
-        (previewStats.size / 1024 / 1024).toFixed(2),
-      );
-    } catch {
-      // Preview neexistuje
-    }
-
     res.json({
       success: true,
       model: {
@@ -935,10 +661,6 @@ app.get("/model-info/:modelName", async (req, res) => {
         downloadUrl: `/download-model/${modelName}`,
         chunked: metadata !== null,
         metadata: metadata,
-        hasPreview,
-        previewName: hasPreview ? previewName : null,
-        previewSizeInMB,
-        previewUrl: hasPreview ? `/download-preview/${previewName}` : null,
       },
     });
   } catch {
@@ -1068,17 +790,12 @@ app.delete("/model/:modelName", async (req, res) => {
     // Připrav všechny cesty k souborům
     const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
     const metadataPath = path.join(METADATA_DIR, `${modelName}.json`);
-    const modelBaseName = modelName.replace(".glb", "");
-    const previewPath = path.join(PREVIEWS_DIR, `${modelBaseName}_preview.glb`);
-    const previewGzipPath = previewPath + ".gz";
 
     // Smaž vše paralelně
     const deleteOps = [
       fsp.unlink(filePath),
       fsp.rm(modelDir, { recursive: true, force: true }).catch(() => {}),
       fsp.unlink(metadataPath).catch(() => {}),
-      fsp.unlink(previewPath).catch(() => {}),
-      fsp.unlink(previewGzipPath).catch(() => {}),
     ];
 
     await Promise.all(deleteOps);
@@ -1099,94 +816,6 @@ app.delete("/model/:modelName", async (req, res) => {
 // ============================================================================
 // ADMIN ENDPOINTS
 // ============================================================================
-
-// Generate previews for all models that don't have one (parallel processing)
-app.post("/admin/generate-previews", async (req, res) => {
-  try {
-    console.log(
-      "\n👁️  Generování preview pro existující modely (paralelně)...\n",
-    );
-
-    const files = await fsp.readdir(MODELS_DIR);
-    const glbFiles = files.filter((f) => f.toLowerCase().endsWith(".glb"));
-
-    // Připrav úlohy pro paralelní zpracování
-    const tasks = glbFiles.map(async (file) => {
-      const modelBaseName = file.replace(".glb", "");
-      const previewName = `${modelBaseName}_preview.glb`;
-      const previewPath = path.join(PREVIEWS_DIR, previewName);
-
-      // Pokud preview existuje, vrať skipped
-      try {
-        await fsp.access(previewPath);
-        return {
-          model: file,
-          status: "skipped",
-          message: "Preview již existuje",
-        };
-      } catch {
-        // Preview neexistuje, pokračuj
-      }
-
-      // Vytvoř preview
-      try {
-        const modelPath = path.join(MODELS_DIR, file);
-        const result = await generatePreviewFromGlb(modelPath, file);
-
-        if (result) {
-          return {
-            model: file,
-            status: "success",
-            previewName: result.previewName,
-            previewSizeInMB: result.previewSizeInMB,
-          };
-        } else {
-          return {
-            model: file,
-            status: "error",
-            message: "Nepodařilo se vytvořit preview",
-          };
-        }
-      } catch (err) {
-        console.error(`❌ Chyba při vytváření preview pro ${file}:`, err);
-        return {
-          model: file,
-          status: "error",
-          message: err.message,
-        };
-      }
-    });
-
-    // Spusť všechny úlohy paralelně
-    const results = await Promise.all(tasks);
-
-    const created = results.filter((r) => r.status === "success").length;
-    const skipped = results.filter((r) => r.status === "skipped").length;
-    const errors = results.filter((r) => r.status === "error").length;
-
-    console.log(
-      `\n✅ Hotovo: ${created} vytvořeno, ${skipped} přeskočeno, ${errors} chyb\n`,
-    );
-
-    res.json({
-      success: true,
-      message: `Zpracováno ${glbFiles.length} modelů`,
-      summary: {
-        created,
-        skipped,
-        errors,
-      },
-      results,
-    });
-  } catch (err) {
-    console.error("❌ Chyba:", err);
-    res.status(500).json({
-      success: false,
-      message: "Chyba při generování preview.",
-      error: err.message,
-    });
-  }
-});
 
 // Compression stats
 app.get("/admin/compression-stats", async (req, res) => {
@@ -1443,7 +1072,6 @@ app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
   console.log(`🚀 Server běží na http://0.0.0.0:${port}`);
   console.log(`📦 Modely: http://0.0.0.0:${port}/models`);
-  console.log(`👁️  Previews: ${PREVIEWS_DIR}`);
   console.log(`💾 Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
   console.log(`🏥 Health check: http://0.0.0.0:${port}/health`);
   console.log("=".repeat(60) + "\n");
