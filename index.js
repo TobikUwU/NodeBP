@@ -10,18 +10,6 @@ const util = require("util");
 const gzip = util.promisify(zlib.gzip);
 const gunzip = util.promisify(zlib.gunzip);
 
-// Zkontroluj, zda jsou všechny dependencies nainstalovány
-try {
-  const gltfPipeline = require("gltf-pipeline");
-  const AdmZip = require("adm-zip");
-  const sharp = require("sharp");
-  console.log("Všechny dependencies načteny");
-} catch (err) {
-  console.error("❌ Chybí dependency:", err.message);
-  console.log("\nSpusť: npm install gltf-pipeline adm-zip sharp");
-  process.exit(1);
-}
-
 const gltfPipeline = require("gltf-pipeline");
 const gltfToGlb = gltfPipeline.gltfToGlb;
 const AdmZip = require("adm-zip");
@@ -147,7 +135,7 @@ async function createChunks(modelPath, modelName) {
     );
   }
 
-  // Spusť všechny chunky paralelně
+  // Spusť všechny chunky
   const chunkResults = await Promise.all(chunkTasks);
 
   // Seřaď podle indexu a extrahuj data
@@ -841,7 +829,6 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
   console.log(`HTTP/1.1 Server běží na http://0.0.0.0:${port}`);
-  console.log(`Modely: http://0.0.0.0:${port}/models`);
   console.log("=".repeat(60));
 });
 
@@ -859,7 +846,6 @@ try {
 
   http2Server.listen(httpsPort, "0.0.0.0", () => {
     console.log(`HTTPS/HTTP2 Server běží na https://0.0.0.0:${httpsPort}`);
-    console.log(`Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
     console.log("=".repeat(60));
   });
 } catch (err) {

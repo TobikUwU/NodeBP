@@ -152,3 +152,4 @@ public/previews
 .claude
 # SSL certificates
 *.pem
+SERVER_FUNCTIONS.txt
