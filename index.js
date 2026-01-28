@@ -87,7 +87,7 @@ function calculateFileHash(filePath) {
   });
 }
 
-// CHUNKING SYSTÉM 
+// CHUNKING SYSTÉM
 
 async function createChunks(modelPath, modelName) {
   const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
@@ -278,7 +278,6 @@ async function optimizeTextures(gltfPath, resourceDir) {
       }
     });
 
-    
     const results = await Promise.all(textureTasks);
 
     const totalOriginalSize = results.reduce(
@@ -428,9 +427,7 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
   }
 });
 
-
 // CHUNK ENDPOINTS S GZIP PODPOROU
-
 
 app.get("/model-metadata/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -473,10 +470,7 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
     try {
       const gzipStats = await fsp.stat(gzipPath);
       if (acceptEncoding.includes("gzip")) {
-        console.log(
-          `Sending compressed chunk ${chunkIndex} for ${modelName}`,
-        );
-
+        console.log(`Sending compressed chunk ${chunkIndex} for ${modelName}`);
 
         res.setHeader("X-Chunk-Compressed", "true");
         res.setHeader("Content-Type", "application/octet-stream");
@@ -485,10 +479,7 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
 
         return res.sendFile(gzipPath);
       }
-    } catch {
-      
-    }
-
+    } catch {}
 
     console.log(`Sending uncompressed chunk ${chunkIndex} for ${modelName}`);
     res.sendFile(chunkPath);
@@ -500,9 +491,7 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
   }
 });
 
-
 // SEZNAM MODELŮ
-
 
 app.get("/models", async (req, res) => {
   try {
@@ -524,8 +513,7 @@ app.get("/models", async (req, res) => {
         const metadata = JSON.parse(metadataContent);
         chunked = true;
         totalChunks = metadata.totalChunks;
-      } catch {
-      }
+      } catch {}
 
       return {
         name: file,
@@ -555,9 +543,7 @@ app.get("/models", async (req, res) => {
   }
 });
 
-
 // DOWNLOAD ENDPOINT
-
 
 app.get("/download-model/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -613,9 +599,7 @@ app.get("/download-model/:modelName", async (req, res) => {
   }
 });
 
-
 // MODEL INFO
-
 
 app.get("/model-info/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -630,8 +614,7 @@ app.get("/model-info/:modelName", async (req, res) => {
     try {
       const metadataContent = await fsp.readFile(metadataPath, "utf8");
       metadata = JSON.parse(metadataContent);
-    } catch {
-    }
+    } catch {}
 
     res.json({
       success: true,
@@ -707,8 +690,7 @@ app.post("/create-all-chunks", async (req, res) => {
           status: "skipped",
           message: "Již má chunky",
         };
-      } catch {
-      }
+      } catch {}
 
       try {
         const modelPath = path.join(MODELS_DIR, file);
@@ -767,7 +749,7 @@ app.delete("/model/:modelName", async (req, res) => {
     const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
     const metadataPath = path.join(METADATA_DIR, `${modelName}.json`);
 
-    // Smaž vše 
+    // Smaž vše
     const deleteOps = [
       fsp.unlink(filePath),
       fsp.rm(modelDir, { recursive: true, force: true }).catch(() => {}),
@@ -789,173 +771,7 @@ app.delete("/model/:modelName", async (req, res) => {
   }
 });
 
-// ADMIN ENDPOINTS
-
-// Compression stats
-app.get("/admin/compression-stats", async (req, res) => {
-  try {
-    const files = await fsp.readdir(METADATA_DIR);
-    const jsonFiles = files.filter((f) => f.endsWith(".json"));
-
-    // Načti všechny metadata paralelně
-    const metadataTasks = jsonFiles.map(async (file) => {
-      try {
-        const content = await fsp.readFile(
-          path.join(METADATA_DIR, file),
-          "utf8",
-        );
-        return JSON.parse(content);
-      } catch {
-        return null;
-      }
-    });
-
-    const allMetadata = await Promise.all(metadataTasks);
-
-    const stats = [];
-    let totalOriginal = 0;
-    let totalCompressed = 0;
-
-    allMetadata.forEach((metadata) => {
-      if (metadata && metadata.compressionStats) {
-        stats.push({
-          model: metadata.modelName,
-          original: metadata.compressionStats.originalSize,
-          compressed: metadata.compressionStats.compressedSize,
-          ratio: metadata.compressionStats.ratio,
-        });
-
-        totalOriginal += metadata.compressionStats.originalSize;
-        totalCompressed += metadata.compressionStats.compressedSize;
-      }
-    });
-
-    res.json({
-      success: true,
-      models: stats,
-      total: {
-        originalMB: (totalOriginal / 1024 / 1024).toFixed(2),
-        compressedMB: (totalCompressed / 1024 / 1024).toFixed(2),
-        savedMB: ((totalOriginal - totalCompressed) / 1024 / 1024).toFixed(2),
-        ratio: ((1 - totalCompressed / totalOriginal) * 100).toFixed(1) + "%",
-      },
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-app.post("/admin/precompress-chunks", async (req, res) => {
-  try {
-    console.log("\n🗜️  Spouštím předkompresi všech chunků (paralelně)...\n");
-
-    const modelDirs = await fsp.readdir(CHUNKS_DIR);
-
-    // Připrav úlohy pro všechny modely
-    const modelTasks = modelDirs.map(async (modelDir) => {
-      const modelPath = path.join(CHUNKS_DIR, modelDir);
-
-      const dirStat = await fsp.stat(modelPath);
-      if (!dirStat.isDirectory()) {
-        return { compressed: 0, originalSize: 0, compressedSize: 0 };
-      }
-
-      const allFiles = await fsp.readdir(modelPath);
-      const chunks = allFiles.filter((f) => f.endsWith(".bin"));
-
-      console.log(`Komprimuji ${chunks.length} chunků pro ${modelDir}...`);
-
-      // Komprimuj všechny chunky daného modelu 
-      const chunkTasks = chunks.map(async (chunk) => {
-        const chunkPath = path.join(modelPath, chunk);
-        const gzipPath = chunkPath + ".gz";
-
-        try {
-          await fsp.access(gzipPath);
-          return { compressed: 0, originalSize: 0, compressedSize: 0 };
-        } catch {
-        }
-
-        const originalData = await fsp.readFile(chunkPath);
-        const compressedData = await gzip(originalData, { level: 9 });
-
-        await fsp.writeFile(gzipPath, compressedData);
-
-        return {
-          compressed: 1,
-          originalSize: originalData.length,
-          compressedSize: compressedData.length,
-        };
-      });
-
-      const chunkResults = await Promise.all(chunkTasks);
-
-      const result = chunkResults.reduce(
-        (acc, r) => ({
-          compressed: acc.compressed + r.compressed,
-          originalSize: acc.originalSize + r.originalSize,
-          compressedSize: acc.compressedSize + r.compressedSize,
-        }),
-        { compressed: 0, originalSize: 0, compressedSize: 0 },
-      );
-
-      console.log(
-        `${modelDir}: ${result.compressed} chunků zkomprimováno`,
-      );
-      return result;
-    });
-
-    // Spusť všechny modely 
-    const modelResults = await Promise.all(modelTasks);
-
-    const totals = modelResults.reduce(
-      (acc, r) => ({
-        compressed: acc.compressed + r.compressed,
-        originalSize: acc.originalSize + r.originalSize,
-        compressedSize: acc.compressedSize + r.compressedSize,
-      }),
-      { compressed: 0, originalSize: 0, compressedSize: 0 },
-    );
-
-    const totalCompressed = totals.compressed;
-    const totalOriginalSize = totals.originalSize;
-    const totalCompressedSize = totals.compressedSize;
-
-    const savings = (
-      (1 - totalCompressedSize / totalOriginalSize) *
-      100
-    ).toFixed(1);
-
-    console.log(`\nPředkomprese dokončena!`);
-    console.log(`Zpracováno: ${totalCompressed} chunků`);
-    console.log(
-      `Úspora: ${savings}% (${((totalOriginalSize - totalCompressedSize) / 1024 / 1024).toFixed(2)} MB)\n`,
-    );
-
-    res.json({
-      success: true,
-      chunksCompressed: totalCompressed,
-      originalMB: (totalOriginalSize / 1024 / 1024).toFixed(2),
-      compressedMB: (totalCompressedSize / 1024 / 1024).toFixed(2),
-      savedMB: (
-        (totalOriginalSize - totalCompressedSize) /
-        1024 /
-        1024
-      ).toFixed(2),
-      ratio: savings + "%",
-    });
-  } catch (err) {
-    console.error("Chyba:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
+// DEBUG ENDPOINT
 
 app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
   const { modelName, chunkIndex } = req.params;
@@ -982,8 +798,7 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
         .createHash("sha256")
         .update(decompressed)
         .digest("hex");
-    } catch {
-    }
+    } catch {}
 
     // Načti metadata
     const metadataPath = path.join(METADATA_DIR, `${modelName}.json`);
@@ -993,8 +808,7 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
       const metadataContent = await fsp.readFile(metadataPath, "utf8");
       const metadata = JSON.parse(metadataContent);
       metadataHash = metadata.chunkHashes[parseInt(chunkIndex)];
-    } catch {
-    }
+    } catch {}
 
     res.json({
       chunkIndex: parseInt(chunkIndex),
@@ -1021,9 +835,7 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
   }
 });
 
-
 // START SERVERU
-
 
 app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
