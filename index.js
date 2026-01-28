@@ -2,12 +2,11 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const fsp = fs.promises; // Async fs operations
+const fsp = fs.promises;
 const crypto = require("crypto");
 const zlib = require("zlib");
 const util = require("util");
 
-// Promisify gzip functions
 const gzip = util.promisify(zlib.gzip);
 const gunzip = util.promisify(zlib.gunzip);
 
@@ -16,10 +15,10 @@ try {
   const gltfPipeline = require("gltf-pipeline");
   const AdmZip = require("adm-zip");
   const sharp = require("sharp");
-  console.log("✅ Všechny dependencies načteny");
+  console.log("Všechny dependencies načteny");
 } catch (err) {
   console.error("❌ Chybí dependency:", err.message);
-  console.log("\n💡 Spusť: npm install gltf-pipeline adm-zip sharp");
+  console.log("\nSpusť: npm install gltf-pipeline adm-zip sharp");
   process.exit(1);
 }
 
@@ -39,17 +38,17 @@ const METADATA_DIR = path.join(__dirname, "public", "metadata");
 const CHUNK_SIZE = 1024 * 1024; // 1 MB chunks
 
 // Vytvoření potřebných složek
-console.log("📁 Vytvářím složky...");
+console.log("Vytvářím složky...");
 [UPLOAD_DIR, MODELS_DIR, CHUNKS_DIR, METADATA_DIR].forEach((dir) => {
   try {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
-      console.log(`  ✅ ${dir}`);
+      console.log(`${dir}`);
     } else {
-      console.log(`  ⏭️  ${dir} už existuje`);
+      console.log(`${dir} už existuje`);
     }
   } catch (err) {
-    console.error(`  ❌ Chyba při vytváření ${dir}:`, err.message);
+    console.error(`Chyba při vytváření ${dir}:`, err.message);
   }
 });
 
@@ -57,9 +56,7 @@ console.log("📁 Vytvářím složky...");
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// ============================================================================
 // UTILITY FUNKCE
-// ============================================================================
 
 async function getAllFiles(dirPath, arrayOfFiles = []) {
   const files = await fsp.readdir(dirPath);
@@ -90,9 +87,7 @@ function calculateFileHash(filePath) {
   });
 }
 
-// ============================================================================
-// CHUNKING SYSTÉM - ✅ OPRAVENO PRO GZIP HASH MISMATCH
-// ============================================================================
+// CHUNKING SYSTÉM 
 
 async function createChunks(modelPath, modelName) {
   const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
@@ -103,12 +98,10 @@ async function createChunks(modelPath, modelName) {
   const fileSize = stats.size;
   const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
 
-  console.log(`📦 Vytvářím ${totalChunks} chunků pro ${modelName}...`);
+  console.log(`Vytvářím ${totalChunks} chunků pro ${modelName}...`);
 
-  // Načti celý soubor do paměti pro paralelní zpracování chunků
   const fileData = await fsp.readFile(modelPath);
 
-  // Připrav všechny chunk úlohy pro paralelní zpracování
   const chunkTasks = [];
   for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
     chunkTasks.push(
@@ -193,17 +186,15 @@ async function createChunks(modelPath, modelName) {
     (1 - totalCompressedSize / totalOriginalSize) *
     100
   ).toFixed(1);
-  console.log(`✅ Chunky vytvořeny: ${totalChunks} chunks`);
+  console.log(`Chunky vytvořeny: ${totalChunks} chunks`);
   console.log(
-    `🗜️  Komprese: ${(totalOriginalSize / 1024 / 1024).toFixed(2)}MB → ${(totalCompressedSize / 1024 / 1024).toFixed(2)}MB (${compressionRatio}% úspora)`,
+    `Komprese: ${(totalOriginalSize / 1024 / 1024).toFixed(2)}MB → ${(totalCompressedSize / 1024 / 1024).toFixed(2)}MB (${compressionRatio}% úspora)`,
   );
 
   return metadata;
 }
 
-// ============================================================================
 // OPTIMALIZACE TEXTUR
-// ============================================================================
 
 async function optimizeTextures(gltfPath, resourceDir) {
   try {
@@ -216,13 +207,12 @@ async function optimizeTextures(gltfPath, resourceDir) {
     }
 
     console.log(
-      `📸 Nalezeno ${gltf.images.length} textur, spouštím optimalizaci (paralelně)...`,
+      `Nalezeno ${gltf.images.length} textur, spouštím optimalizaci (paralelně)...`,
     );
 
-    // Připrav úlohy pro paralelní zpracování textur
     const textureTasks = gltf.images.map(async (image, i) => {
       if (!image.uri) {
-        console.log(`  ⏭️  Přeskakuji embedded texturu [${i}]`);
+        console.log(`Přeskakuji embedded texturu [${i}]`);
         return { originalSize: 0, optimizedSize: 0, skipped: true };
       }
 
@@ -231,7 +221,7 @@ async function optimizeTextures(gltfPath, resourceDir) {
       try {
         await fsp.access(imagePath);
       } catch {
-        console.log(`  ⚠️  Textura nenalezena: ${imagePath}`);
+        console.log(`Textura nenalezena: ${imagePath}`);
         return { originalSize: 0, optimizedSize: 0, skipped: true };
       }
 
@@ -275,21 +265,20 @@ async function optimizeTextures(gltfPath, resourceDir) {
         const origMB = (originalSize / 1024 / 1024).toFixed(2);
         const optMB = (optimizedSize / 1024 / 1024).toFixed(2);
 
-        console.log(`  ✅ ${image.uri}`);
-        console.log(`     ${origMB} MB → ${optMB} MB (úspora ${savings}%)`);
+        console.log(`${image.uri}`);
+        console.log(`${origMB} MB → ${optMB} MB (úspora ${savings}%)`);
 
-        // Update image reference
         image.uri = `${baseName}_opt.jpg`;
         image.mimeType = "image/jpeg";
 
         return { originalSize, optimizedSize, skipped: false };
       } catch (err) {
-        console.error(`  ❌ Chyba při optimalizaci ${imagePath}:`, err.message);
+        console.error(`Chyba při optimalizaci ${imagePath}:`, err.message);
         return { originalSize: 0, optimizedSize: 0, skipped: true };
       }
     });
 
-    // Spusť všechny textury paralelně
+    
     const results = await Promise.all(textureTasks);
 
     const totalOriginalSize = results.reduce(
@@ -306,12 +295,12 @@ async function optimizeTextures(gltfPath, resourceDir) {
         (1 - totalOptimizedSize / totalOriginalSize) *
         100
       ).toFixed(1);
-      console.log(`\n📊 Celková úspora textur: ${totalSavings}%`);
+      console.log(`\nCelková úspora textur: ${totalSavings}%`);
       console.log(
-        `   Původní: ${(totalOriginalSize / 1024 / 1024).toFixed(2)} MB`,
+        `Původní: ${(totalOriginalSize / 1024 / 1024).toFixed(2)} MB`,
       );
       console.log(
-        `   Optimalizováno: ${(totalOptimizedSize / 1024 / 1024).toFixed(2)} MB\n`,
+        `Optimalizováno: ${(totalOptimizedSize / 1024 / 1024).toFixed(2)} MB\n`,
       );
     }
 
@@ -319,14 +308,12 @@ async function optimizeTextures(gltfPath, resourceDir) {
 
     return gltf;
   } catch (err) {
-    console.error("❌ Chyba při optimalizaci textur:", err);
+    console.error("Chyba při optimalizaci textur:", err);
     throw err;
   }
 }
 
-// ============================================================================
 // UPLOAD ENDPOINT
-// ============================================================================
 
 const uploadZip = multer({ storage: multer.memoryStorage() });
 
@@ -350,7 +337,7 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
     }
 
     console.log("\n" + "=".repeat(60));
-    console.log("📦 NOVÝ MODEL - Zpracování začíná");
+    console.log("NOVÝ MODEL - Zpracování začíná");
     console.log("=".repeat(60));
 
     const tempDirPrefix = path.join(UPLOAD_DIR, "model-");
@@ -358,7 +345,7 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
 
     const zip = new AdmZip(req.file.buffer);
     zip.extractAllTo(tempDir, true);
-    console.log("📂 ZIP soubor rozbalen");
+    console.log("ZIP soubor rozbalen");
 
     const allFiles = await getAllFiles(tempDir);
     const gltfFilePath = allFiles.find((f) =>
@@ -373,17 +360,17 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
       });
     }
 
-    console.log(`🎯 GLTF nalezen: ${path.basename(gltfFilePath)}`);
+    console.log(`GLTF nalezen: ${path.basename(gltfFilePath)}`);
 
     const resourceDir = path.dirname(gltfFilePath);
     const modelName = path.parse(gltfFilePath).name;
     const outputName = `${modelName}.glb`;
     const outputPath = path.join(MODELS_DIR, outputName);
 
-    console.log("\n--- KROK 1: Optimalizace textur ---");
+    console.log("\nOptimalizace textur");
     const gltf = await optimizeTextures(gltfFilePath, resourceDir);
 
-    console.log("--- KROK 2: Draco komprese a balení ---");
+    console.log("Draco komprese a balení");
     const options = {
       resourceDirectory: resourceDir,
       dracoOptions: {
@@ -402,14 +389,14 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
 
     const finalSizeMB = (results.glb.length / 1024 / 1024).toFixed(2);
 
-    console.log("\n--- KROK 3: Vytváření chunků ---");
+    console.log("\nVytváření chunků");
     const metadata = await createChunks(outputPath, outputName);
 
     console.log("\n" + "=".repeat(60));
-    console.log(`✅ HOTOVO!`);
-    console.log(`📦 Model: ${outputName}`);
-    console.log(`💾 Velikost: ${finalSizeMB} MB`);
-    console.log(`📦 Chunky: ${metadata.totalChunks}`);
+    console.log(`HOTOVO!`);
+    console.log(`Model: ${outputName}`);
+    console.log(`Velikost: ${finalSizeMB} MB`);
+    console.log(`Chunky: ${metadata.totalChunks}`);
     console.log("=".repeat(60) + "\n");
 
     cleanup();
@@ -428,7 +415,7 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("\n❌ CHYBA při zpracování:", err);
+    console.error("\nCHYBA při zpracování:", err);
     cleanup();
 
     if (!res.headersSent) {
@@ -441,9 +428,9 @@ app.post("/upload-model", uploadZip.single("modelZip"), async (req, res) => {
   }
 });
 
-// ============================================================================
+
 // CHUNK ENDPOINTS S GZIP PODPOROU
-// ============================================================================
+
 
 app.get("/model-metadata/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -481,18 +468,17 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
       return res.status(304).end();
     }
 
-    // Zkontroluj, zda klient podporuje gzip
     const acceptEncoding = req.headers["accept-encoding"] || "";
 
     try {
       const gzipStats = await fsp.stat(gzipPath);
       if (acceptEncoding.includes("gzip")) {
-        // Pošli komprimovaný chunk
         console.log(
-          `📤 Sending compressed chunk ${chunkIndex} for ${modelName}`,
+          `Sending compressed chunk ${chunkIndex} for ${modelName}`,
         );
 
-        res.setHeader("Content-Encoding", "gzip");
+
+        res.setHeader("X-Chunk-Compressed", "true");
         res.setHeader("Content-Type", "application/octet-stream");
         res.setHeader("X-Original-Size", stats.size);
         res.setHeader("X-Compressed-Size", gzipStats.size);
@@ -500,11 +486,11 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
         return res.sendFile(gzipPath);
       }
     } catch {
-      // Gzip neexistuje, pošli nekomprimovaný
+      
     }
 
-    // Pošli nekomprimovaný chunk (fallback)
-    console.log(`📤 Sending uncompressed chunk ${chunkIndex} for ${modelName}`);
+
+    console.log(`Sending uncompressed chunk ${chunkIndex} for ${modelName}`);
     res.sendFile(chunkPath);
   } catch {
     return res.status(404).json({
@@ -514,9 +500,9 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
   }
 });
 
-// ============================================================================
+
 // SEZNAM MODELŮ
-// ============================================================================
+
 
 app.get("/models", async (req, res) => {
   try {
@@ -525,7 +511,6 @@ app.get("/models", async (req, res) => {
       (file) => path.extname(file).toLowerCase() === ".glb",
     );
 
-    // Zpracuj všechny modely paralelně
     const modelTasks = glbFiles.map(async (file) => {
       const filePath = path.join(MODELS_DIR, file);
       const stats = await fsp.stat(filePath);
@@ -540,7 +525,6 @@ app.get("/models", async (req, res) => {
         chunked = true;
         totalChunks = metadata.totalChunks;
       } catch {
-        // Metadata neexistují
       }
 
       return {
@@ -571,9 +555,9 @@ app.get("/models", async (req, res) => {
   }
 });
 
-// ============================================================================
+
 // DOWNLOAD ENDPOINT
-// ============================================================================
+
 
 app.get("/download-model/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -629,9 +613,9 @@ app.get("/download-model/:modelName", async (req, res) => {
   }
 });
 
-// ============================================================================
+
 // MODEL INFO
-// ============================================================================
+
 
 app.get("/model-info/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -647,7 +631,6 @@ app.get("/model-info/:modelName", async (req, res) => {
       const metadataContent = await fsp.readFile(metadataPath, "utf8");
       metadata = JSON.parse(metadataContent);
     } catch {
-      // Metadata neexistují
     }
 
     res.json({
@@ -671,9 +654,7 @@ app.get("/model-info/:modelName", async (req, res) => {
   }
 });
 
-// ============================================================================
 // VYTVOŘENÍ CHUNKŮ PRO EXISTUJÍCÍ MODELY
-// ============================================================================
 
 app.post("/create-chunks/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -689,7 +670,7 @@ app.post("/create-chunks/:modelName", async (req, res) => {
   }
 
   try {
-    console.log(`\n📦 Vytváření chunků pro: ${modelName}`);
+    console.log(`\nVytváření chunků pro: ${modelName}`);
     const metadata = await createChunks(modelPath, modelName);
 
     res.json({
@@ -702,7 +683,7 @@ app.post("/create-chunks/:modelName", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Chyba:", err);
+    console.error("Chyba:", err);
     res.status(500).json({
       success: false,
       message: "Chyba při vytváření chunků.",
@@ -716,7 +697,6 @@ app.post("/create-all-chunks", async (req, res) => {
     const files = await fsp.readdir(MODELS_DIR);
     const glbFiles = files.filter((f) => f.toLowerCase().endsWith(".glb"));
 
-    // Připrav úlohy pro paralelní zpracování
     const tasks = glbFiles.map(async (file) => {
       const metadataPath = path.join(METADATA_DIR, `${file}.json`);
 
@@ -728,12 +708,11 @@ app.post("/create-all-chunks", async (req, res) => {
           message: "Již má chunky",
         };
       } catch {
-        // Metadata neexistují, pokračuj
       }
 
       try {
         const modelPath = path.join(MODELS_DIR, file);
-        console.log(`\n📦 Vytváření chunků pro: ${file}`);
+        console.log(`\nVytváření chunků pro: ${file}`);
         await createChunks(modelPath, file);
 
         return {
@@ -742,7 +721,7 @@ app.post("/create-all-chunks", async (req, res) => {
           message: "Chunky vytvořeny",
         };
       } catch (err) {
-        console.error(`❌ Chyba při vytváření chunků pro ${file}:`, err);
+        console.error(`Chyba při vytváření chunků pro ${file}:`, err);
         return {
           model: file,
           status: "error",
@@ -751,7 +730,6 @@ app.post("/create-all-chunks", async (req, res) => {
       }
     });
 
-    // Spusť všechny úlohy paralelně
     const results = await Promise.all(tasks);
 
     res.json({
@@ -769,9 +747,7 @@ app.post("/create-all-chunks", async (req, res) => {
   }
 });
 
-// ============================================================================
 // SMAZÁNÍ MODELU
-// ============================================================================
 
 app.delete("/model/:modelName", async (req, res) => {
   const modelName = req.params.modelName;
@@ -791,7 +767,7 @@ app.delete("/model/:modelName", async (req, res) => {
     const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
     const metadataPath = path.join(METADATA_DIR, `${modelName}.json`);
 
-    // Smaž vše paralelně
+    // Smaž vše 
     const deleteOps = [
       fsp.unlink(filePath),
       fsp.rm(modelDir, { recursive: true, force: true }).catch(() => {}),
@@ -813,9 +789,7 @@ app.delete("/model/:modelName", async (req, res) => {
   }
 });
 
-// ============================================================================
 // ADMIN ENDPOINTS
-// ============================================================================
 
 // Compression stats
 app.get("/admin/compression-stats", async (req, res) => {
@@ -874,14 +848,13 @@ app.get("/admin/compression-stats", async (req, res) => {
   }
 });
 
-// Precompress all existing chunks
 app.post("/admin/precompress-chunks", async (req, res) => {
   try {
     console.log("\n🗜️  Spouštím předkompresi všech chunků (paralelně)...\n");
 
     const modelDirs = await fsp.readdir(CHUNKS_DIR);
 
-    // Připrav úlohy pro všechny modely paralelně
+    // Připrav úlohy pro všechny modely
     const modelTasks = modelDirs.map(async (modelDir) => {
       const modelPath = path.join(CHUNKS_DIR, modelDir);
 
@@ -893,9 +866,9 @@ app.post("/admin/precompress-chunks", async (req, res) => {
       const allFiles = await fsp.readdir(modelPath);
       const chunks = allFiles.filter((f) => f.endsWith(".bin"));
 
-      console.log(`📦 Komprimuji ${chunks.length} chunků pro ${modelDir}...`);
+      console.log(`Komprimuji ${chunks.length} chunků pro ${modelDir}...`);
 
-      // Komprimuj všechny chunky daného modelu paralelně
+      // Komprimuj všechny chunky daného modelu 
       const chunkTasks = chunks.map(async (chunk) => {
         const chunkPath = path.join(modelPath, chunk);
         const gzipPath = chunkPath + ".gz";
@@ -904,7 +877,6 @@ app.post("/admin/precompress-chunks", async (req, res) => {
           await fsp.access(gzipPath);
           return { compressed: 0, originalSize: 0, compressedSize: 0 };
         } catch {
-          // Gzip neexistuje, pokračuj
         }
 
         const originalData = await fsp.readFile(chunkPath);
@@ -931,12 +903,12 @@ app.post("/admin/precompress-chunks", async (req, res) => {
       );
 
       console.log(
-        `  ✅ ${modelDir}: ${result.compressed} chunků zkomprimováno`,
+        `${modelDir}: ${result.compressed} chunků zkomprimováno`,
       );
       return result;
     });
 
-    // Spusť všechny modely paralelně
+    // Spusť všechny modely 
     const modelResults = await Promise.all(modelTasks);
 
     const totals = modelResults.reduce(
@@ -957,10 +929,10 @@ app.post("/admin/precompress-chunks", async (req, res) => {
       100
     ).toFixed(1);
 
-    console.log(`\n✅ Předkomprese dokončena!`);
-    console.log(`📊 Zpracováno: ${totalCompressed} chunků`);
+    console.log(`\nPředkomprese dokončena!`);
+    console.log(`Zpracováno: ${totalCompressed} chunků`);
     console.log(
-      `💾 Úspora: ${savings}% (${((totalOriginalSize - totalCompressedSize) / 1024 / 1024).toFixed(2)} MB)\n`,
+      `Úspora: ${savings}% (${((totalOriginalSize - totalCompressedSize) / 1024 / 1024).toFixed(2)} MB)\n`,
     );
 
     res.json({
@@ -976,7 +948,7 @@ app.post("/admin/precompress-chunks", async (req, res) => {
       ratio: savings + "%",
     });
   } catch (err) {
-    console.error("❌ Chyba:", err);
+    console.error("Chyba:", err);
     res.status(500).json({
       success: false,
       error: err.message,
@@ -984,20 +956,7 @@ app.post("/admin/precompress-chunks", async (req, res) => {
   }
 });
 
-// ============================================================================
-// HEALTH CHECK
-// ============================================================================
 
-app.get("/health", (req, res) => {
-  res.json({
-    success: true,
-    status: "running",
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-  });
-});
-
-// 🆕 DEBUG ENDPOINT - Ověř hash konkrétního chunku
 app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
   const { modelName, chunkIndex } = req.params;
   const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
@@ -1024,7 +983,6 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
         .update(decompressed)
         .digest("hex");
     } catch {
-      // Gzip neexistuje
     }
 
     // Načti metadata
@@ -1036,7 +994,6 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
       const metadata = JSON.parse(metadataContent);
       metadataHash = metadata.chunkHashes[parseInt(chunkIndex)];
     } catch {
-      // Metadata neexistují
     }
 
     res.json({
@@ -1064,44 +1021,36 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
   }
 });
 
-// ============================================================================
-// START SERVERU
-// ============================================================================
 
-// HTTP/1.1 server (pro kompatibilitu)
+// START SERVERU
+
+
 app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
-  console.log(`🚀 HTTP/1.1 Server běží na http://0.0.0.0:${port}`);
-  console.log(`📦 Modely: http://0.0.0.0:${port}/models`);
+  console.log(`HTTP/1.1 Server běží na http://0.0.0.0:${port}`);
+  console.log(`Modely: http://0.0.0.0:${port}/models`);
   console.log("=".repeat(60));
 });
 
-// HTTP/2 server (pro lepší výkon)
-const http2Port = 3443;
+const httpsPort = 3443;
 try {
-  const http2 = require("http2");
   const https = require("https");
 
   // Načti SSL certifikáty
   const sslOptions = {
     key: fs.readFileSync(path.join(__dirname, "key.pem")),
     cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
-    allowHTTP1: true, // Fallback na HTTP/1.1 pokud klient nepodporuje HTTP/2
   };
 
-  // Vytvoř HTTP/2 server
-  const http2Server = http2.createSecureServer(sslOptions, app);
+  // Vytvoř HTTPS server s Express
+  const httpsServer = https.createServer(sslOptions, app);
 
-  http2Server.listen(http2Port, "0.0.0.0", () => {
-    console.log(`⚡ HTTP/2 Server běží na https://0.0.0.0:${http2Port}`);
-    console.log(`💾 Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
-    console.log(`🏥 Health check: https://0.0.0.0:${http2Port}/health`);
-    console.log("=".repeat(60) + "\n");
-    console.log("💡 Pro Android: Použij https://192.168.50.96:3443");
-    console.log("   (Self-signed cert - bude potřeba trust v aplikaci)");
-    console.log("=".repeat(60) + "\n");
+  httpsServer.listen(httpsPort, "0.0.0.0", () => {
+    console.log(`HTTPS Server běží na https://0.0.0.0:${httpsPort}`);
+    console.log(`HTTP/2 automaticky aktivní pro podporované klienty`);
+    console.log(`Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
   });
 } catch (err) {
-  console.error("⚠️  HTTP/2 server se nepodařilo spustit:", err.message);
-  console.log("   Server běží pouze na HTTP/1.1\n");
+  console.error("HTTPS server se nepodařilo spustit:", err.message);
+  console.log("Server běží pouze na HTTP/1.1\n");
 }

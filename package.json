@@ -28,6 +28,7 @@
     "gltf-pipeline": "^4.3.0",
     "gltfpack": "^1.0.0",
     "multer": "^2.0.2",
-    "obj2gltf": "^3.2.0"
+    "obj2gltf": "^3.2.0",
+    "spdy": "^4.0.2"
   }
 }
