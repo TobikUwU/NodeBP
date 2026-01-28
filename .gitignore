@@ -149,7 +149,6 @@ tmp_uploads
 public/chunks
 public/metadata
 public/previews
-.claude
 # SSL certificates
 *.pem
 SERVER_FUNCTIONS.txt
