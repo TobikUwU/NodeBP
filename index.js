@@ -1068,11 +1068,40 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
 // START SERVERU
 // ============================================================================
 
+// HTTP/1.1 server (pro kompatibilitu)
 app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
-  console.log(`🚀 Server běží na http://0.0.0.0:${port}`);
+  console.log(`🚀 HTTP/1.1 Server běží na http://0.0.0.0:${port}`);
   console.log(`📦 Modely: http://0.0.0.0:${port}/models`);
-  console.log(`💾 Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
-  console.log(`🏥 Health check: http://0.0.0.0:${port}/health`);
-  console.log("=".repeat(60) + "\n");
+  console.log("=".repeat(60));
 });
+
+// HTTP/2 server (pro lepší výkon)
+const http2Port = 3443;
+try {
+  const http2 = require("http2");
+  const https = require("https");
+
+  // Načti SSL certifikáty
+  const sslOptions = {
+    key: fs.readFileSync(path.join(__dirname, "key.pem")),
+    cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
+    allowHTTP1: true, // Fallback na HTTP/1.1 pokud klient nepodporuje HTTP/2
+  };
+
+  // Vytvoř HTTP/2 server
+  const http2Server = http2.createSecureServer(sslOptions, app);
+
+  http2Server.listen(http2Port, "0.0.0.0", () => {
+    console.log(`⚡ HTTP/2 Server běží na https://0.0.0.0:${http2Port}`);
+    console.log(`💾 Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
+    console.log(`🏥 Health check: https://0.0.0.0:${http2Port}/health`);
+    console.log("=".repeat(60) + "\n");
+    console.log("💡 Pro Android: Použij https://192.168.50.96:3443");
+    console.log("   (Self-signed cert - bude potřeba trust v aplikaci)");
+    console.log("=".repeat(60) + "\n");
+  });
+} catch (err) {
+  console.error("⚠️  HTTP/2 server se nepodařilo spustit:", err.message);
+  console.log("   Server běží pouze na HTTP/1.1\n");
+}

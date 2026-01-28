@@ -150,3 +150,5 @@ public/chunks
 public/metadata
 public/previews
 .claude
+# SSL certificates
+*.pem
