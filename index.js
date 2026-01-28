@@ -27,7 +27,8 @@ const gltfToGlb = gltfPipeline.gltfToGlb;
 const AdmZip = require("adm-zip");
 const sharp = require("sharp");
 
-const app = express();
+const http2Express = require("http2-express");
+const app = http2Express(express);
 const port = 3000;
 
 // Konfigurace
@@ -846,21 +847,20 @@ app.listen(port, "0.0.0.0", () => {
 
 const httpsPort = 3443;
 try {
-  const https = require("https");
+  const http2 = require("http2");
 
-  // Načti SSL certifikáty
   const sslOptions = {
     key: fs.readFileSync(path.join(__dirname, "key.pem")),
     cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
+    allowHTTP1: true,
   };
 
-  // Vytvoř HTTPS server s Express
-  const httpsServer = https.createServer(sslOptions, app);
+  const http2Server = http2.createSecureServer(sslOptions, app);
 
-  httpsServer.listen(httpsPort, "0.0.0.0", () => {
-    console.log(`HTTPS Server běží na https://0.0.0.0:${httpsPort}`);
-    console.log(`HTTP/2 automaticky aktivní pro podporované klienty`);
+  http2Server.listen(httpsPort, "0.0.0.0", () => {
+    console.log(`HTTPS/HTTP2 Server běží na https://0.0.0.0:${httpsPort}`);
     console.log(`Chunk size: ${(CHUNK_SIZE / 1024).toFixed(0)} KB`);
+    console.log("=".repeat(60));
   });
 } catch (err) {
   console.error("HTTPS server se nepodařilo spustit:", err.message);
