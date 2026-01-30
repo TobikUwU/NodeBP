@@ -6,6 +6,36 @@ const fsp = fs.promises;
 const crypto = require("crypto");
 const zlib = require("zlib");
 const util = require("util");
+const { execSync } = require("child_process");
+
+/**
+ * Zajistí existenci SSL certifikátů (key.pem, cert.pem) pro HTTPS
+ * a v případě potřeby vygeneruje nové (self-signed).
+ */
+function ensureSslCertificates() {
+  const keyPath = path.join(__dirname, "key.pem");
+  const certPath = path.join(__dirname, "cert.pem");
+
+  try {
+    if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+      console.log("SSL certifikát neexistuje, generuji nový (self-signed)...");
+      const opensslCmd = `openssl req -x509 -newkey rsa:4096 -keyout "${keyPath}" -out "${certPath}" -sha256 -days 3650 -nodes -subj "/C=CZ/ST=Czechia/L=Prague/O=Development/OU=Dev/CN=localhost"`;
+      execSync(opensslCmd);
+      console.log(
+        "Nový SSL certifikát byl úspěšně vygenerován (key.pem, cert.pem).",
+      );
+    } else {
+      console.log("SSL certifikát již existuje.");
+    }
+  } catch (error) {
+    console.error("Došlo k chybě při zajišťování SSL certifikátů:", error);
+    // Toto může být kritické pro start HTTPS serveru
+    // process.exit(1);
+  }
+}
+
+// Spustí kontrolu SSL certifikátů na začátku aplikace
+ensureSslCertificates();
 
 const gzip = util.promisify(zlib.gzip);
 const gunzip = util.promisify(zlib.gunzip);
