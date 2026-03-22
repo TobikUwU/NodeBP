@@ -280,19 +280,28 @@
                         const li = document.createElement("li");
                         li.className =
                             "list-group-item model-item d-flex justify-content-between align-items-center";
+                        const encodedModelName = encodeURIComponent(model.name);
 
                         // Info sekce
                         const infoDiv = document.createElement("div");
                         const nameSpan = document.createElement("div");
                         nameSpan.className = "fw-semibold";
-                        nameSpan.innerHTML = `${model.name}`;
+                        nameSpan.textContent = model.name;
 
                         // Pokud má model chunky, přidáme odznak
+                        const badge = document.createElement("span");
+                        badge.className = model.chunked
+                            ? "badge bg-info text-dark badge-chunk ms-2"
+                            : "badge bg-secondary badge-chunk ms-2";
                         if (model.chunked) {
-                            nameSpan.innerHTML += ` <span class="badge bg-info text-dark badge-chunk ms-2" title="${model.totalChunks} chunks">Chunked (${model.totalChunks})</span>`;
+                            badge.title = `${model.totalChunks} chunks`;
+                            badge.textContent = `Chunked (${model.totalChunks})`;
                         } else {
-                            nameSpan.innerHTML += ` <span class="badge bg-secondary badge-chunk ms-2" title="Pouze jeden soubor">Standard</span>`;
+                            badge.title = "Pouze jeden soubor";
+                            badge.textContent = "Standard";
                         }
+                        nameSpan.appendChild(document.createTextNode(" "));
+                        nameSpan.appendChild(badge);
 
                         const sizeSpan = document.createElement("small");
                         sizeSpan.className = "text-muted";
@@ -309,7 +318,7 @@
                         actionsDiv.className = "d-flex gap-2";
 
                         const downloadBtn = document.createElement("a");
-                        downloadBtn.href = `/download-model/${model.name}`;
+                        downloadBtn.href = `/download-model/${encodedModelName}`;
                         downloadBtn.className = "btn btn-success btn-sm";
                         downloadBtn.innerHTML = "⬇";
                         downloadBtn.title = "Stáhnout GLB";
@@ -383,7 +392,13 @@
             async function deleteModel(modelName) {
                 if (!confirm(`Smazat model "${modelName}"?`)) return;
                 try {
-                    await fetch(`/model/${modelName}`, { method: "DELETE" });
+                    const response = await fetch(
+                        `/model/${encodeURIComponent(modelName)}`,
+                        { method: "DELETE" },
+                    );
+                    if (!response.ok) {
+                        throw new Error("Mazání selhalo.");
+                    }
                     fetchAndDisplayModels();
                 } catch (error) {
                     alert("Chyba při mazání.");
