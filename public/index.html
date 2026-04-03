@@ -3,433 +3,799 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Správce 3D Modelů</title>
-        <link
-            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-            rel="stylesheet"
-        />
+        <title>Progressive glTF Manager</title>
         <style>
+            :root {
+                --bg: #0f1720;
+                --panel: rgba(12, 22, 31, 0.86);
+                --panel-border: rgba(162, 198, 255, 0.18);
+                --accent: #77d4ff;
+                --accent-strong: #17a6ff;
+                --text: #edf4ff;
+                --muted: #94a9bf;
+                --danger: #ff6d7a;
+                --success: #7fe8b4;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
             body {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                margin: 0;
+                font-family: "Segoe UI", sans-serif;
+                color: var(--text);
+                background:
+                    radial-gradient(
+                        circle at top,
+                        rgba(28, 93, 168, 0.35),
+                        transparent 40%
+                    ),
+                    linear-gradient(
+                        160deg,
+                        #091118 0%,
+                        #101e2a 50%,
+                        #071015 100%
+                    );
                 min-height: 100vh;
             }
-            .main-container {
-                background: white;
-                border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-                padding: 40px;
-                margin: 40px auto;
-                max-width: 900px;
+
+            .page {
+                width: min(1320px, calc(100vw - 32px));
+                margin: 24px auto;
+                display: grid;
+                grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+                gap: 20px;
             }
+
+            .panel {
+                background: var(--panel);
+                border: 1px solid var(--panel-border);
+                border-radius: 24px;
+                box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+                backdrop-filter: blur(14px);
+            }
+
+            .sidebar,
+            .viewer {
+                padding: 24px;
+            }
+
+            h1,
+            h2,
+            p {
+                margin-top: 0;
+            }
+
+            .eyebrow {
+                color: var(--accent);
+                text-transform: uppercase;
+                letter-spacing: 0.12em;
+                font-size: 0.76rem;
+            }
+
             .upload-zone {
-                border: 3px dashed #667eea;
-                border-radius: 15px;
-                padding: 30px;
-                text-align: center;
-                transition: all 0.3s;
-                cursor: pointer;
+                border: 1px dashed rgba(119, 212, 255, 0.45);
+                border-radius: 18px;
+                padding: 18px;
+                background: rgba(255, 255, 255, 0.03);
+                margin-bottom: 20px;
             }
-            .upload-zone:hover {
-                border-color: #764ba2;
-                background: #f8f9ff;
-            }
+
             .upload-zone.dragover {
-                background: #e8ecff;
-                border-color: #764ba2;
+                border-color: var(--accent);
+                background: rgba(23, 166, 255, 0.12);
             }
+
+            .button,
+            button,
+            a.button {
+                border: 0;
+                border-radius: 999px;
+                padding: 12px 18px;
+                background: linear-gradient(
+                    135deg,
+                    var(--accent),
+                    var(--accent-strong)
+                );
+                color: #04111b;
+                cursor: pointer;
+                font-weight: 700;
+                text-decoration: none;
+            }
+
+            .secondary {
+                background: rgba(255, 255, 255, 0.08);
+                color: var(--text);
+            }
+
+            button.danger {
+                background: rgba(255, 109, 122, 0.14);
+                color: #ffd7db;
+            }
+
+            button:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+
+            .progress-shell {
+                height: 10px;
+                background: rgba(255, 255, 255, 0.07);
+                border-radius: 999px;
+                overflow: hidden;
+                margin: 12px 0 6px;
+            }
+
+            .progress-bar {
+                width: 0%;
+                height: 100%;
+                background: linear-gradient(90deg, #72ffd8, #1bb1ff);
+                transition: width 0.25s ease;
+            }
+
+            .status {
+                color: var(--muted);
+                font-size: 0.92rem;
+                min-height: 1.2rem;
+            }
+
+            .model-list {
+                display: grid;
+                gap: 12px;
+            }
+
             .model-item {
-                transition: all 0.2s;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 18px;
+                padding: 16px;
+                background: rgba(255, 255, 255, 0.03);
             }
-            .model-item:hover {
-                background: #f8f9ff;
-                transform: translateX(5px);
+
+            .model-item h3 {
+                margin: 0 0 6px;
+                font-size: 1rem;
             }
-            .header-gradient {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
+
+            .model-item p {
+                margin: 0;
+                color: var(--muted);
+                font-size: 0.88rem;
             }
-            .badge-chunk {
-                font-size: 0.7em;
-                vertical-align: middle;
+
+            .model-actions {
+                display: flex;
+                gap: 8px;
+                margin-top: 14px;
+                flex-wrap: wrap;
+            }
+
+            .viewer {
+                display: grid;
+                grid-template-rows: auto auto 1fr;
+                min-height: 760px;
+            }
+
+            .meta-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+
+            .meta-card {
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 18px;
+                padding: 14px;
+                background: rgba(255, 255, 255, 0.03);
+            }
+
+            .meta-card strong {
+                display: block;
+                font-size: 1.1rem;
+                margin-top: 4px;
+            }
+
+            .viewer-shell {
+                position: relative;
+                min-height: 520px;
+                border-radius: 24px;
+                overflow: hidden;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background:
+                    radial-gradient(
+                        circle at 20% 20%,
+                        rgba(46, 160, 255, 0.3),
+                        transparent 25%
+                    ),
+                    radial-gradient(
+                        circle at 80% 30%,
+                        rgba(0, 255, 180, 0.12),
+                        transparent 20%
+                    ),
+                    linear-gradient(
+                        180deg,
+                        rgba(12, 24, 34, 0.7),
+                        rgba(5, 10, 15, 0.95)
+                    );
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+
+            .viewer-overlay {
+                position: absolute;
+                left: 16px;
+                right: 16px;
+                top: 16px;
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+                pointer-events: none;
+            }
+
+            .pill {
+                background: rgba(5, 12, 18, 0.62);
+                border: 1px solid rgba(255, 255, 255, 0.09);
+                border-radius: 999px;
+                padding: 8px 12px;
+                color: var(--text);
+                font-size: 0.84rem;
+            }
+
+            .lod-stack {
+                margin-top: 16px;
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .lod-chip {
+                padding: 10px 12px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                font-size: 0.9rem;
+            }
+
+            .lod-chip.active {
+                border-color: rgba(127, 232, 180, 0.55);
+                background: rgba(127, 232, 180, 0.12);
+            }
+
+            .lod-chip.loaded {
+                border-color: rgba(119, 212, 255, 0.45);
+            }
+
+            .empty {
+                color: var(--muted);
+                padding: 24px 0;
+            }
+
+            @media (max-width: 980px) {
+                .page {
+                    grid-template-columns: 1fr;
+                }
+
+                .viewer {
+                    min-height: 680px;
+                }
+
+                .meta-grid {
+                    grid-template-columns: 1fr;
+                }
             }
         </style>
     </head>
     <body>
-        <main class="main-container">
-            <div class="text-center mb-5">
-                <h1 class="display-4 fw-bold header-gradient">
-                    📦 3D Model Manager
-                </h1>
-                <p class="lead text-muted">
-                    Optimalizace, komprese a chunking 3D modelů
+        <main class="page">
+            <aside class="panel sidebar">
+                <p class="eyebrow">Progressive glTF</p>
+                <h1>Sprava modelu s postupnym LOD nacitanim</h1>
+                <p class="status">
+                    Server uklada model jako vic glTF variant a klient nejdriv
+                    vykresli lehkou verzi, potom ji nahradi kvalitnejsi.
                 </p>
-            </div>
 
-            <section class="card mb-5 shadow-sm border-0">
-                <div
-                    class="card-header bg-gradient text-white"
-                    style="
-                        background: linear-gradient(
-                            135deg,
-                            #667eea 0%,
-                            #764ba2 100%
-                        );
-                    "
-                >
-                    <h2 class="h5 mb-0">
-                        📤 Nahrát model (ZIP s GLTF + textury)
-                    </h2>
-                </div>
-                <div class="card-body">
-                    <div class="upload-zone" id="uploadZone">
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="64"
-                            height="64"
-                            fill="currentColor"
-                            class="bi bi-cloud-upload text-primary mb-3"
-                            viewBox="0 0 16 16"
-                        >
-                            <path
-                                fill-rule="evenodd"
-                                d="M4.406 1.342A5.53 5.53 0 0 1 8 0c2.69 0 4.923 2 5.166 4.579C14.758 4.804 16 6.137 16 7.773 16 9.569 14.502 11 12.687 11H10a.5.5 0 0 1 0-1h2.688C13.979 10 15 8.988 15 7.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 2.825 10.328 1 8 1a4.53 4.53 0 0 0-2.941 1.1c-.757.652-1.153 1.438-1.153 2.055v.448l-.445.049C2.064 4.805 1 5.952 1 7.318 1 8.785 2.23 10 3.781 10H6a.5.5 0 0 1 0 1H3.781C1.708 11 0 9.366 0 7.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383"
-                            />
-                            <path
-                                fill-rule="evenodd"
-                                d="M7.646 4.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 5.707V14.5a.5.5 0 0 1-1 0V5.707L5.354 7.854a.5.5 0 1 1-.708-.708z"
-                            />
-                        </svg>
-                        <h5 class="mb-2">Přetáhněte ZIP soubor sem</h5>
-                        <p class="text-muted mb-3">
-                            nebo klikněte pro výběr souboru
-                        </p>
-                        <form id="uploadForm">
-                            <input
-                                class="form-control d-none"
-                                type="file"
-                                id="modelFile"
-                                name="modelZip"
-                                required
-                                accept=".zip"
-                            />
+                <section class="upload-zone" id="uploadZone">
+                    <h2>Nahrat ZIP s glTF</h2>
+                    <p class="status">
+                        ZIP musi obsahovat `.gltf` a navazane assety. Vystup je
+                        `preview`, `standard` a `full`.
+                    </p>
+                    <form id="uploadForm">
+                        <input
+                            id="modelFile"
+                            type="file"
+                            name="modelZip"
+                            accept=".zip"
+                            hidden
+                        />
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap">
                             <button
-                                type="submit"
-                                class="btn btn-primary btn-lg"
+                                type="button"
+                                class="secondary"
+                                id="pickFileButton"
                             >
-                                Nahrát a zpracovat
+                                Vybrat ZIP
                             </button>
-                        </form>
+                            <button type="submit">Zpracovat model</button>
+                        </div>
+                    </form>
+                    <div class="progress-shell">
+                        <div class="progress-bar" id="progressBar"></div>
                     </div>
+                    <div class="status" id="uploadStatus">
+                        Ceka se na soubor.
+                    </div>
+                </section>
 
+                <section>
                     <div
-                        class="progress-container mt-4"
-                        style="display: none"
-                        id="progressContainer"
+                        style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            gap: 12px;
+                            margin-bottom: 14px;
+                        "
                     >
-                        <div class="d-flex justify-content-between mb-2">
-                            <span id="uploadFileName" class="text-muted"></span>
-                            <span id="uploadProgress" class="text-muted"
-                                >0%</span
-                            >
-                        </div>
-                        <div class="progress" style="height: 25px">
-                            <div
-                                id="progressBar"
-                                class="progress-bar progress-bar-striped progress-bar-animated"
-                                role="progressbar"
-                                style="width: 0%"
-                            ></div>
-                        </div>
-                        <div
-                            id="uploadStats"
-                            class="mt-2 text-center text-muted small"
-                        ></div>
+                        <h2 style="margin-bottom: 0">Modely</h2>
+                        <button class="secondary" id="refreshButton">
+                            Obnovit
+                        </button>
                     </div>
+                    <div class="model-list" id="modelList">
+                        <div class="empty">Nacitam modely...</div>
+                    </div>
+                </section>
+            </aside>
 
-                    <div id="uploadStatus" class="mt-3"></div>
+            <section class="panel viewer">
+                <div>
+                    <p class="eyebrow">Viewer</p>
+                    <h2 id="viewerTitle">Vyber model</h2>
+                    <p class="status" id="viewerDescription">
+                        Po vyberu modelu se nejdriv nacte `preview`, pak
+                        `standard` a nakonec `full`.
+                    </p>
                 </div>
-            </section>
 
-            <section class="card shadow-sm border-0">
-                <div class="card-header bg-light">
-                    <div
-                        class="d-flex justify-content-between align-items-center flex-wrap gap-2"
-                    >
-                        <h2 class="h5 mb-0">📚 Dostupné modely</h2>
-                        <div class="d-flex gap-2">
-                            <button
-                                class="btn btn-sm btn-outline-warning text-dark"
-                                onclick="createAllChunks(this)"
-                                title="Vytvoří chunky pro modely, které je nemají"
-                            >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    class="bi bi-boxes"
-                                    viewBox="0 0 16 16"
-                                >
-                                    <path
-                                        d="M7.752.066a.5.5 0 0 1 .496 0l3.75 2.143a.5.5 0 0 1 .252.434v3.995l3.498 2A.5.5 0 0 1 16 9.07v4.286a.5.5 0 0 1-.252.434l-3.75 2.143a.5.5 0 0 1-.496 0l-3.502-2-3.502 2.001a.5.5 0 0 1-.496 0l-3.75-2.143A.5.5 0 0 1 0 13.357V9.071a.5.5 0 0 1 .252-.434L3.75 6.638V2.643a.5.5 0 0 1 .252-.434zM4.25 7.504 1.508 9.071l2.742 1.567 2.742-1.567zM7.5 9.933l-2.75 1.571v3.134l2.75-1.571zm1 3.134 2.75 1.571v-3.134L8.5 9.933zm.508-3.996 2.742 1.567 2.742-1.567-2.742-1.567zm2.242-2.433V3.504L8.5 5.076V8.21zM7.5 8.21V5.076L4.75 3.504v3.134zM5.258 2.643 8 4.21l2.742-1.567L8 1.076zM15 9.933l-2.75 1.571v3.134L15 13.067zM3.75 14.638v-3.134L1 9.933v3.134z"
-                                    />
-                                </svg>
-                                Generovat chunky
-                            </button>
-
-                            <button
-                                class="btn btn-sm btn-outline-primary"
-                                onclick="fetchAndDisplayModels()"
-                            >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    class="bi bi-arrow-clockwise"
-                                    viewBox="0 0 16 16"
-                                >
-                                    <path
-                                        fill-rule="evenodd"
-                                        d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"
-                                    />
-                                    <path
-                                        d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"
-                                    />
-                                </svg>
-                                Obnovit
-                            </button>
-                        </div>
+                <div class="meta-grid">
+                    <div class="meta-card">
+                        Aktivni LOD
+                        <strong id="activeLodLabel">-</strong>
+                    </div>
+                    <div class="meta-card">
+                        Velikost baliku
+                        <strong id="packageSize">-</strong>
+                    </div>
+                    <div class="meta-card">
+                        Pocet variant
+                        <strong id="lodCount">-</strong>
                     </div>
                 </div>
-                <div class="card-body">
-                    <ul id="modelList" class="list-group">
-                        <li class="list-group-item text-center">Načítání...</li>
-                    </ul>
+
+                <div>
+                    <div class="viewer-shell" id="viewerShell">
+                        <div class="viewer-overlay">
+                            <div class="pill" id="streamState">Pripraveno</div>
+                            <div class="pill" id="modelState">Bez modelu</div>
+                        </div>
+                    </div>
+                    <div class="lod-stack" id="lodStack"></div>
                 </div>
             </section>
         </main>
 
-        <script>
-            // Elementy
-            const modelListEl = document.getElementById("modelList");
+        <script type="module">
+            import * as THREE from "https://unpkg.com/three@0.165.0/build/three.module.js";
+            import { OrbitControls } from "https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js";
+            import { GLTFLoader } from "https://unpkg.com/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
+
             const uploadForm = document.getElementById("uploadForm");
             const modelFileInput = document.getElementById("modelFile");
-            const uploadStatusEl = document.getElementById("uploadStatus");
+            const pickFileButton = document.getElementById("pickFileButton");
             const uploadZone = document.getElementById("uploadZone");
-            const progressContainer =
-                document.getElementById("progressContainer");
             const progressBar = document.getElementById("progressBar");
-            const uploadProgress = document.getElementById("uploadProgress");
-            const uploadFileName = document.getElementById("uploadFileName");
-            const uploadStats = document.getElementById("uploadStats");
+            const uploadStatus = document.getElementById("uploadStatus");
+            const modelList = document.getElementById("modelList");
+            const refreshButton = document.getElementById("refreshButton");
+            const viewerTitle = document.getElementById("viewerTitle");
+            const viewerDescription =
+                document.getElementById("viewerDescription");
+            const activeLodLabel = document.getElementById("activeLodLabel");
+            const packageSize = document.getElementById("packageSize");
+            const lodCount = document.getElementById("lodCount");
+            const streamState = document.getElementById("streamState");
+            const modelState = document.getElementById("modelState");
+            const lodStack = document.getElementById("lodStack");
+            const viewerShell = document.getElementById("viewerShell");
 
-            // --- DRAG & DROP LOGIKA ---
-            uploadZone.addEventListener("click", () => modelFileInput.click());
-            uploadZone.addEventListener("dragover", (e) => {
-                e.preventDefault();
+            let currentManifest = null;
+            let currentObject = null;
+            let currentLoadToken = 0;
+
+            const renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: true,
+            });
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            viewerShell.appendChild(renderer.domElement);
+
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+            camera.position.set(2.8, 1.8, 3.5);
+
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.target.set(0, 0.8, 0);
+
+            const hemiLight = new THREE.HemisphereLight(
+                0xeaf6ff,
+                0x17222b,
+                1.45,
+            );
+            scene.add(hemiLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.7);
+            dirLight.position.set(4, 6, 5);
+            scene.add(dirLight);
+
+            const ground = new THREE.Mesh(
+                new THREE.CircleGeometry(8, 64),
+                new THREE.MeshStandardMaterial({
+                    color: 0x17303d,
+                    roughness: 0.95,
+                    metalness: 0.05,
+                    transparent: true,
+                    opacity: 0.65,
+                }),
+            );
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.01;
+            scene.add(ground);
+
+            const grid = new THREE.GridHelper(12, 12, 0x3d95c4, 0x23404f);
+            grid.position.y = 0;
+            grid.material.transparent = true;
+            grid.material.opacity = 0.28;
+            scene.add(grid);
+
+            function resizeRenderer() {
+                const width = viewerShell.clientWidth;
+                const height = viewerShell.clientHeight;
+                renderer.setSize(width, height);
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+            }
+
+            window.addEventListener("resize", resizeRenderer);
+            resizeRenderer();
+
+            function animate() {
+                controls.update();
+                renderer.render(scene, camera);
+                requestAnimationFrame(animate);
+            }
+
+            animate();
+
+            function formatMegabytes(value) {
+                return `${value.toFixed(2)} MB`;
+            }
+
+            function setUploadProgress(value, text) {
+                progressBar.style.width = `${value}%`;
+                uploadStatus.textContent = text;
+            }
+
+            function renderModels(models) {
+                modelList.innerHTML = "";
+
+                if (!models.length) {
+                    modelList.innerHTML =
+                        '<div class="empty">Zatim zde nejsou zadne modely.</div>';
+                    return;
+                }
+
+                for (const model of models) {
+                    const item = document.createElement("article");
+                    item.className = "model-item";
+                    item.innerHTML = `
+            <h3>${model.name}</h3>
+            <p>${model.lodCount} variant • ${model.totalSizeInMB} MB</p>
+            <p>${new Date(model.createdAt).toLocaleString("cs-CZ")}</p>
+          `;
+
+                    const actions = document.createElement("div");
+                    actions.className = "model-actions";
+
+                    const previewButton = document.createElement("button");
+                    previewButton.textContent = "Zobrazit";
+                    previewButton.addEventListener("click", () =>
+                        loadManifest(model.id),
+                    );
+
+                    const manifestButton = document.createElement("a");
+                    manifestButton.className = "button secondary";
+                    manifestButton.textContent = "Manifest";
+                    manifestButton.href = `/api/models/${encodeURIComponent(model.id)}/manifest`;
+                    manifestButton.target = "_blank";
+
+                    const deleteButton = document.createElement("button");
+                    deleteButton.className = "danger";
+                    deleteButton.textContent = "Smazat";
+                    deleteButton.addEventListener("click", () =>
+                        deleteModel(model.id, model.name),
+                    );
+
+                    actions.append(previewButton, manifestButton, deleteButton);
+                    item.appendChild(actions);
+                    modelList.appendChild(item);
+                }
+            }
+
+            async function fetchModels() {
+                modelList.innerHTML =
+                    '<div class="empty">Nacitam modely...</div>';
+                try {
+                    const response = await fetch("/api/models");
+                    if (!response.ok) {
+                        throw new Error("Nepodarilo se nacist modely.");
+                    }
+
+                    const payload = await response.json();
+                    renderModels(payload.models || []);
+                } catch (error) {
+                    modelList.innerHTML = `<div class="empty">${error.message}</div>`;
+                }
+            }
+
+            async function deleteModel(modelId, modelName) {
+                if (!confirm(`Smazat model "${modelName}"?`)) {
+                    return;
+                }
+
+                const response = await fetch(
+                    `/api/models/${encodeURIComponent(modelId)}`,
+                    {
+                        method: "DELETE",
+                    },
+                );
+
+                if (!response.ok) {
+                    alert("Mazani selhalo.");
+                    return;
+                }
+
+                if (currentManifest?.id === modelId) {
+                    unloadCurrentModel();
+                    currentManifest = null;
+                    viewerTitle.textContent = "Vyber model";
+                    viewerDescription.textContent =
+                        "Po vyberu modelu se nejdriv nacte `preview`, pak `standard` a nakonec `full`.";
+                    activeLodLabel.textContent = "-";
+                    packageSize.textContent = "-";
+                    lodCount.textContent = "-";
+                    streamState.textContent = "Pripraveno";
+                    modelState.textContent = "Bez modelu";
+                    lodStack.innerHTML = "";
+                }
+
+                fetchModels();
+            }
+
+            function updateLodStack(lods, activeId, loadedIds = new Set()) {
+                lodStack.innerHTML = "";
+                for (const lod of lods) {
+                    const chip = document.createElement("div");
+                    chip.className = "lod-chip";
+                    if (loadedIds.has(lod.id)) chip.classList.add("loaded");
+                    if (lod.id === activeId) chip.classList.add("active");
+                    chip.textContent = `${lod.label} • ${Math.round(lod.byteSize / 1024)} KB`;
+                    lodStack.appendChild(chip);
+                }
+            }
+
+            function unloadCurrentModel() {
+                if (!currentObject) {
+                    return;
+                }
+
+                scene.remove(currentObject);
+                currentObject.traverse((node) => {
+                    if (node.geometry) node.geometry.dispose();
+                    if (node.material) {
+                        if (Array.isArray(node.material)) {
+                            node.material.forEach((material) =>
+                                material.dispose(),
+                            );
+                        } else {
+                            node.material.dispose();
+                        }
+                    }
+                });
+                currentObject = null;
+            }
+
+            function fitCameraToObject(object) {
+                const box = new THREE.Box3().setFromObject(object);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+
+                const maxSize = Math.max(size.x, size.y, size.z) || 1;
+                const distance = maxSize * 1.75;
+
+                camera.position.set(
+                    center.x + distance,
+                    center.y + distance * 0.6,
+                    center.z + distance,
+                );
+                controls.target.copy(center);
+                controls.update();
+            }
+
+            function createLoader() {
+                const manager = new THREE.LoadingManager();
+                const loader = new GLTFLoader(manager);
+
+                manager.onStart = () => {
+                    modelState.textContent = "Stahuji assety...";
+                };
+
+                manager.onLoad = () => {
+                    modelState.textContent = "Assety pripraveny";
+                };
+
+                manager.onError = (url) => {
+                    modelState.textContent = `Chyba assetu: ${url}`;
+                };
+
+                return loader;
+            }
+
+            async function loadLod(lod, token) {
+                streamState.textContent = `Nacitam ${lod.label}`;
+
+                const loader = createLoader();
+
+                const gltf = await new Promise((resolve, reject) => {
+                    loader.load(
+                        lod.gltf,
+                        resolve,
+                        () => {
+                            modelState.textContent = `Prenasim ${lod.label}`;
+                        },
+                        reject,
+                    );
+                });
+
+                if (token !== currentLoadToken) {
+                    return null;
+                }
+
+                return gltf.scene;
+            }
+
+            async function progressivelyLoadManifest(manifest) {
+                currentLoadToken += 1;
+                const token = currentLoadToken;
+                currentManifest = manifest;
+
+                const loadedIds = new Set();
+                viewerTitle.textContent = manifest.name;
+                viewerDescription.textContent = manifest.notes;
+                packageSize.textContent = formatMegabytes(
+                    manifest.lods.reduce((sum, lod) => sum + lod.byteSize, 0) /
+                        1024 /
+                        1024,
+                );
+                lodCount.textContent = String(manifest.lods.length);
+                updateLodStack(manifest.lods, null, loadedIds);
+
+                for (const lod of manifest.lods) {
+                    try {
+                        const lodObject = await loadLod(lod, token);
+                        if (!lodObject || token !== currentLoadToken) {
+                            return;
+                        }
+
+                        unloadCurrentModel();
+                        currentObject = lodObject;
+                        scene.add(currentObject);
+                        fitCameraToObject(currentObject);
+
+                        loadedIds.add(lod.id);
+                        activeLodLabel.textContent = lod.label;
+                        streamState.textContent = `Zobrazen ${lod.label}`;
+                        modelState.textContent = `Klient bezi na LOD ${lod.id}`;
+                        updateLodStack(manifest.lods, lod.id, loadedIds);
+                    } catch (error) {
+                        console.error(error);
+                        if (loadedIds.size === 0) {
+                            streamState.textContent = "Nacteni selhalo";
+                            modelState.textContent = error.message;
+                        }
+                        return;
+                    }
+                }
+
+                streamState.textContent = "Dokonceno";
+                modelState.textContent = "Nactena nejvyssi dostupna kvalita";
+            }
+
+            async function loadManifest(modelId) {
+                streamState.textContent = "Nacitam manifest";
+                modelState.textContent = "Pripravuji viewer";
+
+                try {
+                    const response = await fetch(
+                        `/api/models/${encodeURIComponent(modelId)}/manifest`,
+                    );
+                    if (!response.ok) {
+                        throw new Error("Manifest se nepodarilo nacist.");
+                    }
+
+                    const payload = await response.json();
+                    await progressivelyLoadManifest(payload.model);
+                } catch (error) {
+                    streamState.textContent = "Chyba";
+                    modelState.textContent = error.message;
+                }
+            }
+
+            pickFileButton.addEventListener("click", () =>
+                modelFileInput.click(),
+            );
+
+            uploadZone.addEventListener("dragover", (event) => {
+                event.preventDefault();
                 uploadZone.classList.add("dragover");
             });
+
             uploadZone.addEventListener("dragleave", () => {
                 uploadZone.classList.remove("dragover");
             });
-            uploadZone.addEventListener("drop", (e) => {
-                e.preventDefault();
+
+            uploadZone.addEventListener("drop", (event) => {
+                event.preventDefault();
                 uploadZone.classList.remove("dragover");
-                if (
-                    e.dataTransfer.files.length > 0 &&
-                    e.dataTransfer.files[0].name.endsWith(".zip")
-                ) {
-                    modelFileInput.files = e.dataTransfer.files;
-                    uploadFileName.textContent = e.dataTransfer.files[0].name;
-                }
-            });
-            modelFileInput.addEventListener("change", (e) => {
-                if (e.target.files.length > 0) {
-                    uploadFileName.textContent = e.target.files[0].name;
+                if (event.dataTransfer.files[0]) {
+                    modelFileInput.files = event.dataTransfer.files;
+                    uploadStatus.textContent = `Vybran soubor ${event.dataTransfer.files[0].name}`;
                 }
             });
 
-            // --- NAČTENÍ MODELŮ ---
-            async function fetchAndDisplayModels() {
-                modelListEl.innerHTML = `
-                    <li class="list-group-item text-center">
-                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                        Načítání...
-                    </li>`;
+            modelFileInput.addEventListener("change", () => {
+                const file = modelFileInput.files[0];
+                uploadStatus.textContent = file
+                    ? `Vybran soubor ${file.name}`
+                    : "Ceka se na soubor.";
+            });
 
-                try {
-                    const response = await fetch("/models");
-                    if (!response.ok) throw new Error("Chyba serveru");
-                    const data = await response.json();
-                    const models = data.models || [];
-
-                    modelListEl.innerHTML = "";
-
-                    if (models.length === 0) {
-                        modelListEl.innerHTML = `
-                            <li class="list-group-item text-center text-muted p-4">
-                                📦 Zatím zde nejsou žádné modely.
-                            </li>`;
-                        return;
-                    }
-
-                    models.forEach((model) => {
-                        const li = document.createElement("li");
-                        li.className =
-                            "list-group-item model-item d-flex justify-content-between align-items-center";
-                        const encodedModelName = encodeURIComponent(model.name);
-
-                        // Info sekce
-                        const infoDiv = document.createElement("div");
-                        const nameSpan = document.createElement("div");
-                        nameSpan.className = "fw-semibold";
-                        nameSpan.textContent = model.name;
-
-                        // Pokud má model chunky, přidáme odznak
-                        const badge = document.createElement("span");
-                        badge.className = model.chunked
-                            ? "badge bg-info text-dark badge-chunk ms-2"
-                            : "badge bg-secondary badge-chunk ms-2";
-                        if (model.chunked) {
-                            badge.title = `${model.totalChunks} chunks`;
-                            badge.textContent = `Chunked (${model.totalChunks})`;
-                        } else {
-                            badge.title = "Pouze jeden soubor";
-                            badge.textContent = "Standard";
-                        }
-                        nameSpan.appendChild(document.createTextNode(" "));
-                        nameSpan.appendChild(badge);
-
-                        const sizeSpan = document.createElement("small");
-                        sizeSpan.className = "text-muted";
-                        const date = new Date(
-                            model.modified,
-                        ).toLocaleDateString("cs-CZ");
-                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date}`;
-
-                        infoDiv.appendChild(nameSpan);
-                        infoDiv.appendChild(sizeSpan);
-
-                        // Akce
-                        const actionsDiv = document.createElement("div");
-                        actionsDiv.className = "d-flex gap-2";
-
-                        const downloadBtn = document.createElement("a");
-                        downloadBtn.href = `/download-model/${encodedModelName}`;
-                        downloadBtn.className = "btn btn-success btn-sm";
-                        downloadBtn.innerHTML = "⬇";
-                        downloadBtn.title = "Stáhnout GLB";
-
-                        const deleteBtn = document.createElement("button");
-                        deleteBtn.className = "btn btn-outline-danger btn-sm";
-                        deleteBtn.innerHTML = "🗑";
-                        deleteBtn.title = "Smazat";
-                        deleteBtn.onclick = () => deleteModel(model.name);
-
-                        actionsDiv.appendChild(downloadBtn);
-                        actionsDiv.appendChild(deleteBtn);
-
-                        li.appendChild(infoDiv);
-                        li.appendChild(actionsDiv);
-                        modelListEl.appendChild(li);
-                    });
-                } catch (error) {
-                    modelListEl.innerHTML = `<li class="list-group-item list-group-item-danger">Chyba: ${error.message}</li>`;
-                }
-            }
-
-            // --- VYTVOŘENÍ VŠECH CHUNKŮ ---
-            async function createAllChunks(btn) {
-                if (
-                    !confirm(
-                        "Opravdu chcete vygenerovat chunky pro všechny modely, které je ještě nemají?",
-                    )
-                )
-                    return;
-
-                const originalText = btn.innerHTML;
-                btn.disabled = true;
-                btn.innerHTML =
-                    '<span class="spinner-border spinner-border-sm"></span> Pracuji...';
-
-                try {
-                    const res = await fetch("/create-all-chunks", {
-                        method: "POST",
-                    });
-                    const data = await res.json();
-
-                    if (data.success) {
-                        const successCount = data.results.filter(
-                            (r) => r.status === "success",
-                        ).length;
-                        const skippedCount = data.results.filter(
-                            (r) => r.status === "skipped",
-                        ).length;
-                        const errorCount = data.results.filter(
-                            (r) => r.status === "error",
-                        ).length;
-
-                        alert(
-                            `Dokončeno!\n\n✅ Vytvořeno: ${successCount}\n⏭️ Přeskočeno (již existuje): ${skippedCount}\n❌ Chyby: ${errorCount}`,
-                        );
-                        fetchAndDisplayModels(); // Obnovit seznam pro zobrazení badge
-                    } else {
-                        alert("Chyba: " + data.message);
-                    }
-                } catch (e) {
-                    alert("Chyba komunikace se serverem.");
-                    console.error(e);
-                } finally {
-                    btn.disabled = false;
-                    btn.innerHTML = originalText;
-                }
-            }
-
-            // --- SMAZÁNÍ MODELU ---
-            async function deleteModel(modelName) {
-                if (!confirm(`Smazat model "${modelName}"?`)) return;
-                try {
-                    const response = await fetch(
-                        `/model/${encodeURIComponent(modelName)}`,
-                        { method: "DELETE" },
-                    );
-                    if (!response.ok) {
-                        throw new Error("Mazání selhalo.");
-                    }
-                    fetchAndDisplayModels();
-                } catch (error) {
-                    alert("Chyba při mazání.");
-                }
-            }
-
-            // --- UPLOAD HANDLER ---
             uploadForm.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 const file = modelFileInput.files[0];
-                if (!file) return;
+                if (!file) {
+                    return;
+                }
 
                 const formData = new FormData();
                 formData.append("modelZip", file);
 
-                progressContainer.style.display = "block";
-                uploadStatusEl.innerHTML = "";
-                progressBar.style.width = "0%";
-                uploadProgress.textContent = "0%";
+                setUploadProgress(8, "Odesilam ZIP na server...");
 
-                // Fake progress (protože fetch neumí nativně upload progress)
-                let simulatedProgress = 0;
-                const progressInterval = setInterval(() => {
-                    if (simulatedProgress < 90) {
-                        simulatedProgress += Math.random() * 15;
-                        if (simulatedProgress > 90) simulatedProgress = 90;
-                        progressBar.style.width = simulatedProgress + "%";
-                        uploadProgress.textContent =
-                            Math.floor(simulatedProgress) + "%";
-                    }
-                }, 400);
+                let fakeProgress = 8;
+                const interval = setInterval(() => {
+                    fakeProgress = Math.min(fakeProgress + 6, 92);
+                    progressBar.style.width = `${fakeProgress}%`;
+                }, 500);
 
                 try {
                     const response = await fetch("/upload-model", {
@@ -437,40 +803,30 @@
                         body: formData,
                     });
 
-                    clearInterval(progressInterval);
-                    progressBar.style.width = "100%";
-                    uploadProgress.textContent = "100%";
-
-                    const result = await response.json();
-
-                    if (result.success) {
-                        uploadStatusEl.innerHTML = `
-                        <div class="alert alert-success">
-                            ✅ Model nahrán a zpracován!<br>
-                            Velikost: <strong>${result.sizeInMB} MB</strong><br>
-                            Chunky: <strong>${result.metadata.totalChunks}</strong>
-                        </div>`;
-                        fetchAndDisplayModels();
-                        setTimeout(
-                            () => (progressContainer.style.display = "none"),
-                            3000,
-                        );
-                    } else {
-                        throw new Error(result.message);
+                    clearInterval(interval);
+                    if (!response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        throw new Error(payload.message || "Upload selhal.");
                     }
+
+                    const payload = await response.json();
+                    setUploadProgress(100, `Hotovo: ${payload.model.name}`);
+                    modelFileInput.value = "";
+                    await fetchModels();
+                    await loadManifest(payload.model.id);
+                    setTimeout(
+                        () => setUploadProgress(0, "Ceka se na soubor."),
+                        1600,
+                    );
                 } catch (error) {
-                    clearInterval(progressInterval);
-                    uploadStatusEl.innerHTML = `<div class="alert alert-danger">❌ Chyba: ${error.message}</div>`;
+                    clearInterval(interval);
+                    setUploadProgress(0, error.message);
                 }
-                uploadForm.reset();
-                uploadFileName.textContent = "";
             });
 
-            // Start
-            document.addEventListener(
-                "DOMContentLoaded",
-                fetchAndDisplayModels,
-            );
+            refreshButton.addEventListener("click", fetchModels);
+
+            fetchModels();
         </script>
     </body>
 </html>
