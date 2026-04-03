@@ -44,17 +44,15 @@
                 background: #f8f9ff;
                 transform: translateX(5px);
             }
-            .size-badge {
-                font-size: 0.85rem;
-            }
-            .progress-container {
-                display: none;
-            }
             .header-gradient {
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
                 background-clip: text;
+            }
+            .badge-chunk {
+                font-size: 0.7em;
+                vertical-align: middle;
             }
         </style>
     </head>
@@ -65,12 +63,10 @@
                     📦 3D Model Manager
                 </h1>
                 <p class="lead text-muted">
-                    Optimalizace a komprese velkoobjemových 3D modelů pro
-                    mobilní aplikace
+                    Optimalizace, komprese a chunking 3D modelů
                 </p>
             </div>
 
-            <!-- Upload sekce -->
             <section class="card mb-5 shadow-sm border-0">
                 <div
                     class="card-header bg-gradient text-white"
@@ -122,28 +118,16 @@
                                 type="submit"
                                 class="btn btn-primary btn-lg"
                             >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    class="bi bi-upload me-2"
-                                    viewBox="0 0 16 16"
-                                >
-                                    <path
-                                        d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"
-                                    />
-                                    <path
-                                        d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"
-                                    />
-                                </svg>
                                 Nahrát a zpracovat
                             </button>
                         </form>
                     </div>
 
-                    <!-- Progress bar -->
-                    <div class="progress-container mt-4">
+                    <div
+                        class="progress-container mt-4"
+                        style="display: none"
+                        id="progressContainer"
+                    >
                         <div class="d-flex justify-content-between mb-2">
                             <span id="uploadFileName" class="text-muted"></span>
                             <span id="uploadProgress" class="text-muted"
@@ -165,130 +149,120 @@
                     </div>
 
                     <div id="uploadStatus" class="mt-3"></div>
-
-                    <div class="alert alert-info mt-4" role="alert">
-                        <strong>💡 Co se stane:</strong>
-                        <ol class="mb-0 mt-2">
-                            <li>Rozbalení ZIP souboru</li>
-                            <li>
-                                Optimalizace textur (JPEG 85%, max 2K rozlišení)
-                            </li>
-                            <li>Draco komprese meshů</li>
-                            <li>Zabalení do GLB formátu</li>
-                        </ol>
-                    </div>
                 </div>
             </section>
 
-            <!-- Seznam modelů -->
             <section class="card shadow-sm border-0">
                 <div class="card-header bg-light">
                     <div
-                        class="d-flex justify-content-between align-items-center"
+                        class="d-flex justify-content-between align-items-center flex-wrap gap-2"
                     >
                         <h2 class="h5 mb-0">📚 Dostupné modely</h2>
-                        <button
-                            class="btn btn-sm btn-outline-primary"
-                            onclick="fetchAndDisplayModels()"
-                        >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="16"
-                                height="16"
-                                fill="currentColor"
-                                class="bi bi-arrow-clockwise"
-                                viewBox="0 0 16 16"
+                        <div class="d-flex gap-2">
+                            <button
+                                class="btn btn-sm btn-outline-warning text-dark"
+                                onclick="createAllChunks(this)"
+                                title="Vytvoří chunky pro modely, které je nemají"
                             >
-                                <path
-                                    fill-rule="evenodd"
-                                    d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"
-                                />
-                                <path
-                                    d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"
-                                />
-                            </svg>
-                            Obnovit
-                        </button>
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="16"
+                                    height="16"
+                                    fill="currentColor"
+                                    class="bi bi-boxes"
+                                    viewBox="0 0 16 16"
+                                >
+                                    <path
+                                        d="M7.752.066a.5.5 0 0 1 .496 0l3.75 2.143a.5.5 0 0 1 .252.434v3.995l3.498 2A.5.5 0 0 1 16 9.07v4.286a.5.5 0 0 1-.252.434l-3.75 2.143a.5.5 0 0 1-.496 0l-3.502-2-3.502 2.001a.5.5 0 0 1-.496 0l-3.75-2.143A.5.5 0 0 1 0 13.357V9.071a.5.5 0 0 1 .252-.434L3.75 6.638V2.643a.5.5 0 0 1 .252-.434zM4.25 7.504 1.508 9.071l2.742 1.567 2.742-1.567zM7.5 9.933l-2.75 1.571v3.134l2.75-1.571zm1 3.134 2.75 1.571v-3.134L8.5 9.933zm.508-3.996 2.742 1.567 2.742-1.567-2.742-1.567zm2.242-2.433V3.504L8.5 5.076V8.21zM7.5 8.21V5.076L4.75 3.504v3.134zM5.258 2.643 8 4.21l2.742-1.567L8 1.076zM15 9.933l-2.75 1.571v3.134L15 13.067zM3.75 14.638v-3.134L1 9.933v3.134z"
+                                    />
+                                </svg>
+                                Generovat chunky
+                            </button>
+
+                            <button
+                                class="btn btn-sm btn-outline-primary"
+                                onclick="fetchAndDisplayModels()"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="16"
+                                    height="16"
+                                    fill="currentColor"
+                                    class="bi bi-arrow-clockwise"
+                                    viewBox="0 0 16 16"
+                                >
+                                    <path
+                                        fill-rule="evenodd"
+                                        d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"
+                                    />
+                                    <path
+                                        d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"
+                                    />
+                                </svg>
+                                Obnovit
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="card-body">
                     <ul id="modelList" class="list-group">
-                        <li class="list-group-item text-center">
-                            <div
-                                class="spinner-border spinner-border-sm text-primary"
-                                role="status"
-                            >
-                                <span class="visually-hidden">Načítání...</span>
-                            </div>
-                            Načítání...
-                        </li>
+                        <li class="list-group-item text-center">Načítání...</li>
                     </ul>
                 </div>
             </section>
-
-            <footer class="text-center text-muted mt-5">
-                <p class="small">&copy; 2025 3D Model Optimization Pipeline</p>
-            </footer>
         </main>
 
         <script>
+            // Elementy
             const modelListEl = document.getElementById("modelList");
             const uploadForm = document.getElementById("uploadForm");
             const modelFileInput = document.getElementById("modelFile");
             const uploadStatusEl = document.getElementById("uploadStatus");
             const uploadZone = document.getElementById("uploadZone");
-            const progressContainer = document.querySelector(
-                ".progress-container",
-            );
+            const progressContainer =
+                document.getElementById("progressContainer");
             const progressBar = document.getElementById("progressBar");
             const uploadProgress = document.getElementById("uploadProgress");
             const uploadFileName = document.getElementById("uploadFileName");
             const uploadStats = document.getElementById("uploadStats");
 
-            // Drag & Drop handlers
+            // --- DRAG & DROP LOGIKA ---
             uploadZone.addEventListener("click", () => modelFileInput.click());
-
             uploadZone.addEventListener("dragover", (e) => {
                 e.preventDefault();
                 uploadZone.classList.add("dragover");
             });
-
             uploadZone.addEventListener("dragleave", () => {
                 uploadZone.classList.remove("dragover");
             });
-
             uploadZone.addEventListener("drop", (e) => {
                 e.preventDefault();
                 uploadZone.classList.remove("dragover");
-
-                const files = e.dataTransfer.files;
-                if (files.length > 0 && files[0].name.endsWith(".zip")) {
-                    modelFileInput.files = files;
-                    uploadFileName.textContent = files[0].name;
+                if (
+                    e.dataTransfer.files.length > 0 &&
+                    e.dataTransfer.files[0].name.endsWith(".zip")
+                ) {
+                    modelFileInput.files = e.dataTransfer.files;
+                    uploadFileName.textContent = e.dataTransfer.files[0].name;
                 }
             });
-
             modelFileInput.addEventListener("change", (e) => {
                 if (e.target.files.length > 0) {
                     uploadFileName.textContent = e.target.files[0].name;
                 }
             });
 
+            // --- NAČTENÍ MODELŮ ---
             async function fetchAndDisplayModels() {
                 modelListEl.innerHTML = `
                     <li class="list-group-item text-center">
-                        <div class="spinner-border spinner-border-sm text-primary" role="status">
-                            <span class="visually-hidden">Načítání...</span>
-                        </div>
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
                         Načítání...
-                    </li>
-                `;
+                    </li>`;
 
                 try {
                     const response = await fetch("/models");
-                    if (!response.ok)
-                        throw new Error(`Chyba serveru: ${response.status}`);
-
+                    if (!response.ok) throw new Error("Chyba serveru");
                     const data = await response.json();
                     const models = data.models || [];
 
@@ -296,129 +270,166 @@
 
                     if (models.length === 0) {
                         modelListEl.innerHTML = `
-                            <li class="list-group-item text-center text-muted">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-inbox mb-2" viewBox="0 0 16 16">
-                                    <path d="M4.98 4a.5.5 0 0 0-.39.188L1.54 8H6a.5.5 0 0 1 .5.5 1.5 1.5 0 1 0 3 0A.5.5 0 0 1 10 8h4.46l-3.05-3.812A.5.5 0 0 0 11.02 4zm9.954 5H10.45a2.5 2.5 0 0 1-4.9 0H1.066l.32 2.562a.5.5 0 0 0 .497.438h12.234a.5.5 0 0 0 .496-.438zM3.809 3.563A1.5 1.5 0 0 1 4.981 3h6.038a1.5 1.5 0 0 1 1.172.563l3.7 4.625a.5.5 0 0 1 .105.374l-.39 3.124A1.5 1.5 0 0 1 14.117 13H1.883a1.5 1.5 0 0 1-1.489-1.314l-.39-3.124a.5.5 0 0 1 .106-.374z"/>
-                                </svg>
-                                <p class="mb-0">Zatím žádné modely</p>
-                                <small>Nahrajte svůj první model výše</small>
-                            </li>
-                        `;
-                    } else {
-                        models.forEach((model) => {
-                            const li = document.createElement("li");
-                            li.className =
-                                "list-group-item model-item d-flex justify-content-between align-items-center";
-
-                            const infoDiv = document.createElement("div");
-                            const nameSpan = document.createElement("div");
-                            nameSpan.className = "fw-semibold";
-                            nameSpan.textContent = model.name;
-
-                            const sizeSpan = document.createElement("small");
-                            sizeSpan.className = "text-muted";
-                            const date = new Date(
-                                model.modified,
-                            ).toLocaleDateString("cs-CZ");
-                            sizeSpan.textContent = `${model.sizeInMB} MB • ${date}`;
-
-                            infoDiv.appendChild(nameSpan);
-                            infoDiv.appendChild(sizeSpan);
-
-                            const actionsDiv = document.createElement("div");
-                            actionsDiv.className = "d-flex gap-2";
-
-                            const downloadBtn = document.createElement("a");
-                            downloadBtn.href = `/download-model/${model.name}`;
-                            downloadBtn.className = "btn btn-success btn-sm";
-                            downloadBtn.innerHTML = `
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16">
-                                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
-                                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
-                                </svg>
-                                Stáhnout
-                            `;
-
-                            const deleteBtn = document.createElement("button");
-                            deleteBtn.className =
-                                "btn btn-outline-danger btn-sm";
-                            deleteBtn.innerHTML = `
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16">
-                                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
-                                    <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
-                                </svg>
-                            `;
-                            deleteBtn.onclick = () => deleteModel(model.name);
-
-                            actionsDiv.appendChild(downloadBtn);
-                            actionsDiv.appendChild(deleteBtn);
-
-                            li.appendChild(infoDiv);
-                            li.appendChild(actionsDiv);
-                            modelListEl.appendChild(li);
-                        });
+                            <li class="list-group-item text-center text-muted p-4">
+                                📦 Zatím zde nejsou žádné modely.
+                            </li>`;
+                        return;
                     }
+
+                    models.forEach((model) => {
+                        const li = document.createElement("li");
+                        li.className =
+                            "list-group-item model-item d-flex justify-content-between align-items-center";
+                        const encodedModelName = encodeURIComponent(model.name);
+
+                        // Info sekce
+                        const infoDiv = document.createElement("div");
+                        const nameSpan = document.createElement("div");
+                        nameSpan.className = "fw-semibold";
+                        nameSpan.textContent = model.name;
+
+                        // Pokud má model chunky, přidáme odznak
+                        const badge = document.createElement("span");
+                        badge.className = model.chunked
+                            ? "badge bg-info text-dark badge-chunk ms-2"
+                            : "badge bg-secondary badge-chunk ms-2";
+                        if (model.chunked) {
+                            badge.title = `${model.totalChunks} chunks`;
+                            badge.textContent = `Chunked (${model.totalChunks})`;
+                        } else {
+                            badge.title = "Pouze jeden soubor";
+                            badge.textContent = "Standard";
+                        }
+                        nameSpan.appendChild(document.createTextNode(" "));
+                        nameSpan.appendChild(badge);
+
+                        const sizeSpan = document.createElement("small");
+                        sizeSpan.className = "text-muted";
+                        const date = new Date(
+                            model.modified,
+                        ).toLocaleDateString("cs-CZ");
+                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date}`;
+
+                        infoDiv.appendChild(nameSpan);
+                        infoDiv.appendChild(sizeSpan);
+
+                        // Akce
+                        const actionsDiv = document.createElement("div");
+                        actionsDiv.className = "d-flex gap-2";
+
+                        const downloadBtn = document.createElement("a");
+                        downloadBtn.href = `/download-model/${encodedModelName}`;
+                        downloadBtn.className = "btn btn-success btn-sm";
+                        downloadBtn.innerHTML = "⬇";
+                        downloadBtn.title = "Stáhnout GLB";
+
+                        const deleteBtn = document.createElement("button");
+                        deleteBtn.className = "btn btn-outline-danger btn-sm";
+                        deleteBtn.innerHTML = "🗑";
+                        deleteBtn.title = "Smazat";
+                        deleteBtn.onclick = () => deleteModel(model.name);
+
+                        actionsDiv.appendChild(downloadBtn);
+                        actionsDiv.appendChild(deleteBtn);
+
+                        li.appendChild(infoDiv);
+                        li.appendChild(actionsDiv);
+                        modelListEl.appendChild(li);
+                    });
                 } catch (error) {
-                    modelListEl.innerHTML = `
-                        <li class="list-group-item list-group-item-danger">
-                            <strong>Chyba při načítání modelů:</strong> ${error.message}
-                        </li>
-                    `;
+                    modelListEl.innerHTML = `<li class="list-group-item list-group-item-danger">Chyba: ${error.message}</li>`;
                 }
             }
 
-            async function deleteModel(modelName) {
-                if (!confirm(`Opravdu chcete smazat model "${modelName}"?`))
+            // --- VYTVOŘENÍ VŠECH CHUNKŮ ---
+            async function createAllChunks(btn) {
+                if (
+                    !confirm(
+                        "Opravdu chcete vygenerovat chunky pro všechny modely, které je ještě nemají?",
+                    )
+                )
                     return;
+
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML =
+                    '<span class="spinner-border spinner-border-sm"></span> Pracuji...';
 
                 try {
-                    const response = await fetch(`/model/${modelName}`, {
-                        method: "DELETE",
+                    const res = await fetch("/create-all-chunks", {
+                        method: "POST",
                     });
+                    const data = await res.json();
 
-                    const result = await response.json();
+                    if (data.success) {
+                        const successCount = data.results.filter(
+                            (r) => r.status === "success",
+                        ).length;
+                        const skippedCount = data.results.filter(
+                            (r) => r.status === "skipped",
+                        ).length;
+                        const errorCount = data.results.filter(
+                            (r) => r.status === "error",
+                        ).length;
 
-                    if (result.success) {
-                        fetchAndDisplayModels();
+                        alert(
+                            `Dokončeno!\n\n✅ Vytvořeno: ${successCount}\n⏭️ Přeskočeno (již existuje): ${skippedCount}\n❌ Chyby: ${errorCount}`,
+                        );
+                        fetchAndDisplayModels(); // Obnovit seznam pro zobrazení badge
                     } else {
-                        alert("Chyba při mazání modelu: " + result.message);
+                        alert("Chyba: " + data.message);
                     }
-                } catch (error) {
-                    alert("Chyba při mazání: " + error.message);
+                } catch (e) {
+                    alert("Chyba komunikace se serverem.");
+                    console.error(e);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
                 }
             }
 
+            // --- SMAZÁNÍ MODELU ---
+            async function deleteModel(modelName) {
+                if (!confirm(`Smazat model "${modelName}"?`)) return;
+                try {
+                    const response = await fetch(
+                        `/model/${encodeURIComponent(modelName)}`,
+                        { method: "DELETE" },
+                    );
+                    if (!response.ok) {
+                        throw new Error("Mazání selhalo.");
+                    }
+                    fetchAndDisplayModels();
+                } catch (error) {
+                    alert("Chyba při mazání.");
+                }
+            }
+
+            // --- UPLOAD HANDLER ---
             uploadForm.addEventListener("submit", async (event) => {
                 event.preventDefault();
-
                 const file = modelFileInput.files[0];
-                if (!file) {
-                    uploadStatusEl.innerHTML =
-                        '<div class="alert alert-warning">Nebyl vybrán žádný soubor.</div>';
-                    return;
-                }
+                if (!file) return;
 
                 const formData = new FormData();
                 formData.append("modelZip", file);
 
-                // Zobraz progress bar
                 progressContainer.style.display = "block";
                 uploadStatusEl.innerHTML = "";
                 progressBar.style.width = "0%";
                 uploadProgress.textContent = "0%";
-                uploadStats.innerHTML =
-                    '<div class="spinner-border spinner-border-sm me-2" role="status"></div>Zpracovávám model, prosím čekejte...';
 
-                // Simulace progressu (server neposílá progress events)
+                // Fake progress (protože fetch neumí nativně upload progress)
                 let simulatedProgress = 0;
                 const progressInterval = setInterval(() => {
                     if (simulatedProgress < 90) {
-                        simulatedProgress += Math.random() * 10;
+                        simulatedProgress += Math.random() * 15;
+                        if (simulatedProgress > 90) simulatedProgress = 90;
                         progressBar.style.width = simulatedProgress + "%";
                         uploadProgress.textContent =
                             Math.floor(simulatedProgress) + "%";
                     }
-                }, 500);
+                }, 400);
 
                 try {
                     const response = await fetch("/upload-model", {
@@ -432,42 +443,30 @@
 
                     const result = await response.json();
 
-                    if (!result.success) {
-                        throw new Error(
-                            result.message ||
-                                `Chyba serveru: ${response.status}`,
-                        );
-                    }
-
-                    uploadStats.innerHTML = `
-                        ✅ Hotovo! Finální velikost: <strong>${result.sizeInMB} MB</strong>
-                    `;
-
-                    setTimeout(() => {
+                    if (result.success) {
                         uploadStatusEl.innerHTML = `
-                            <div class="alert alert-success">
-                                <strong>✅ Úspěch!</strong> ${result.message}
-                                <br>Velikost: <strong>${result.sizeInMB} MB</strong>
-                            </div>
-                        `;
-                        progressContainer.style.display = "none";
+                        <div class="alert alert-success">
+                            ✅ Model nahrán a zpracován!<br>
+                            Velikost: <strong>${result.sizeInMB} MB</strong><br>
+                            Chunky: <strong>${result.metadata.totalChunks}</strong>
+                        </div>`;
                         fetchAndDisplayModels();
-                    }, 1000);
+                        setTimeout(
+                            () => (progressContainer.style.display = "none"),
+                            3000,
+                        );
+                    } else {
+                        throw new Error(result.message);
+                    }
                 } catch (error) {
                     clearInterval(progressInterval);
-                    uploadStatusEl.innerHTML = `
-                        <div class="alert alert-danger">
-                            <strong>❌ Chyba při zpracování:</strong> ${error.message}
-                        </div>
-                    `;
-                    progressContainer.style.display = "none";
-                } finally {
-                    uploadForm.reset();
-                    uploadFileName.textContent = "";
+                    uploadStatusEl.innerHTML = `<div class="alert alert-danger">❌ Chyba: ${error.message}</div>`;
                 }
+                uploadForm.reset();
+                uploadFileName.textContent = "";
             });
 
-            // Načti modely při startu
+            // Start
             document.addEventListener(
                 "DOMContentLoaded",
                 fetchAndDisplayModels,

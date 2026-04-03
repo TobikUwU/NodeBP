@@ -141,7 +141,12 @@ vite.config.ts.timestamp-*
 # User-uploaded 3D models
 /public/models/
 
-# Another directory for models to be ignored
-models4use
 
 tmp_uploads
+
+public/chunks
+public/metadata
+public/previews
+# SSL certificates
+*.pem
+SERVER_FUNCTIONS.txt
