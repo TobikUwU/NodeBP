@@ -106,11 +106,112 @@ function calculateFileHash(filePath) {
   });
 }
 
+function addImageIndexFromTextureInfo(gltf, imageSet, textureInfo) {
+  if (!textureInfo || !Number.isInteger(textureInfo.index)) {
+    return;
+  }
+
+  const texture = gltf.textures?.[textureInfo.index];
+  if (!texture || !Number.isInteger(texture.source)) {
+    return;
+  }
+
+  imageSet.add(texture.source);
+}
+
+function collectDataTextureImageIndices(gltf) {
+  const dataTextureImages = new Set();
+
+  for (const material of gltf.materials || []) {
+    const pbr = material.pbrMetallicRoughness || {};
+    const extensions = material.extensions || {};
+
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      pbr.metallicRoughnessTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      material.normalTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      material.occlusionTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_pbrSpecularGlossiness?.specularGlossinessTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_specular?.specularTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_clearcoat?.clearcoatTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_clearcoat?.clearcoatRoughnessTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_clearcoat?.clearcoatNormalTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_transmission?.transmissionTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_volume?.thicknessTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_anisotropy?.anisotropyTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_ior?.iorTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_dispersion?.dispersionTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_iridescence?.iridescenceTexture,
+    );
+    addImageIndexFromTextureInfo(
+      gltf,
+      dataTextureImages,
+      extensions.KHR_materials_iridescence?.iridescenceThicknessTexture,
+    );
+  }
+
+  return dataTextureImages;
+}
+
 // CHUNKING SYSTÉM
 
 async function createChunks(modelPath, modelName) {
   const modelDir = path.join(CHUNKS_DIR, modelName.replace(".glb", ""));
 
+  await fsp.rm(modelDir, { recursive: true, force: true });
   await fsp.mkdir(modelDir, { recursive: true });
 
   const stats = await fsp.stat(modelPath);
@@ -119,66 +220,56 @@ async function createChunks(modelPath, modelName) {
 
   console.log(`Vytvářím ${totalChunks} chunků pro ${modelName}...`);
 
-  const fileData = await fsp.readFile(modelPath);
+  const chunkHashes = [];
+  let totalOriginalSize = 0;
+  let totalCompressedSize = 0;
+  const fileHandle = await fsp.open(modelPath, "r");
 
-  const chunkTasks = [];
   for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-    chunkTasks.push(
-      (async () => {
-        const chunkPath = path.join(modelDir, `chunk_${chunkIndex}.bin`);
-        const gzipPath = chunkPath + ".gz";
+    const chunkPath = path.join(modelDir, `chunk_${chunkIndex}.bin`);
+    const gzipPath = chunkPath + ".gz";
+    const start = chunkIndex * CHUNK_SIZE;
+    const bytesToRead = Math.min(CHUNK_SIZE, fileSize - start);
+    const chunkBuffer = Buffer.allocUnsafe(bytesToRead);
 
-        const start = chunkIndex * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, fileSize);
-        const chunk = fileData.slice(start, end);
+    try {
+      const { bytesRead } = await fileHandle.read(
+        chunkBuffer,
+        0,
+        bytesToRead,
+        start,
+      );
+      const chunk =
+        bytesRead === bytesToRead
+          ? chunkBuffer
+          : chunkBuffer.subarray(0, bytesRead);
 
-        // Ulož nekomprimovaný chunk
-        await fsp.writeFile(chunkPath, chunk);
+      await fsp.writeFile(chunkPath, chunk);
 
-        // GZIP komprese
-        const compressed = await gzip(chunk, { level: 9 });
-        await fsp.writeFile(gzipPath, compressed);
+      const compressed = await gzip(chunk, { level: 9 });
+      await fsp.writeFile(gzipPath, compressed);
 
-        // Hash z nekomprimovaných dat
-        const chunkHash = crypto
-          .createHash("sha256")
-          .update(chunk)
-          .digest("hex");
+      const chunkHash = crypto.createHash("sha256").update(chunk).digest("hex");
 
-        if (chunkIndex % 10 === 0) {
-          const savings = (
-            (1 - compressed.length / chunk.length) *
-            100
-          ).toFixed(1);
-          console.log(
-            `  Chunk ${chunkIndex}: ${(chunk.length / 1024).toFixed(0)}KB → ${(compressed.length / 1024).toFixed(0)}KB (${savings}% úspora)`,
-          );
-        }
+      chunkHashes.push(chunkHash);
+      totalOriginalSize += chunk.length;
+      totalCompressedSize += compressed.length;
 
-        return {
-          index: chunkIndex,
-          hash: chunkHash,
-          originalSize: chunk.length,
-          compressedSize: compressed.length,
-        };
-      })(),
-    );
+      if (chunkIndex % 10 === 0) {
+        const savings = ((1 - compressed.length / chunk.length) * 100).toFixed(
+          1,
+        );
+        console.log(
+          `  Chunk ${chunkIndex}: ${(chunk.length / 1024).toFixed(0)}KB → ${(compressed.length / 1024).toFixed(0)}KB (${savings}% úspora)`,
+        );
+      }
+    } catch (err) {
+      await fileHandle.close();
+      throw err;
+    }
   }
 
-  // Spusť všechny chunky
-  const chunkResults = await Promise.all(chunkTasks);
-
-  // Seřaď podle indexu a extrahuj data
-  chunkResults.sort((a, b) => a.index - b.index);
-  const chunkHashes = chunkResults.map((r) => r.hash);
-  const totalOriginalSize = chunkResults.reduce(
-    (sum, r) => sum + r.originalSize,
-    0,
-  );
-  const totalCompressedSize = chunkResults.reduce(
-    (sum, r) => sum + r.compressedSize,
-    0,
-  );
+  await fileHandle.close();
 
   const fileHash = await calculateFileHash(modelPath);
 
@@ -219,6 +310,7 @@ async function optimizeTextures(gltfPath, resourceDir) {
   try {
     const gltfContent = await fsp.readFile(gltfPath, "utf8");
     const gltf = JSON.parse(gltfContent);
+    const dataTextureImages = collectDataTextureImageIndices(gltf);
 
     if (!gltf.images || gltf.images.length === 0) {
       console.log("Model neobsahuje žádné textury.");
@@ -246,13 +338,12 @@ async function optimizeTextures(gltfPath, resourceDir) {
 
       const ext = path.extname(imagePath).toLowerCase();
       const baseName = path.basename(imagePath, ext);
-      const optimizedPath = path.join(resourceDir, `${baseName}_opt.jpg`);
 
       try {
         const stats = await fsp.stat(imagePath);
         const originalSize = stats.size;
-
-        const imgMeta = await sharp(imagePath).metadata();
+        const imageProcessor = sharp(imagePath);
+        const imgMeta = await imageProcessor.metadata();
 
         let maxSize;
         if (imgMeta.width > 4096 || imgMeta.height > 4096) {
@@ -265,17 +356,36 @@ async function optimizeTextures(gltfPath, resourceDir) {
           maxSize = imgMeta.width;
         }
 
-        await sharp(imagePath)
-          .resize(maxSize, maxSize, {
-            fit: "inside",
-            withoutEnlargement: true,
-          })
-          .jpeg({
+        const hasAlpha = imgMeta.hasAlpha === true || imgMeta.channels === 4;
+        const isDataTexture = dataTextureImages.has(i);
+        const useJpeg =
+          !hasAlpha && !isDataTexture && (ext === ".jpg" || ext === ".jpeg");
+        const outputExt = useJpeg ? ".jpg" : ".png";
+        const outputMimeType = useJpeg ? "image/jpeg" : "image/png";
+        const optimizedPath = path.join(
+          resourceDir,
+          `${baseName}_opt${outputExt}`,
+        );
+
+        let pipeline = imageProcessor.resize(maxSize, maxSize, {
+          fit: "inside",
+          withoutEnlargement: true,
+        });
+
+        if (useJpeg) {
+          pipeline = pipeline.jpeg({
             quality: 85,
             mozjpeg: true,
             chromaSubsampling: "4:2:0",
-          })
-          .toFile(optimizedPath);
+          });
+        } else {
+          pipeline = pipeline.png({
+            compressionLevel: 9,
+            palette: !hasAlpha,
+          });
+        }
+
+        await pipeline.toFile(optimizedPath);
 
         const optimizedStats = await fsp.stat(optimizedPath);
         const optimizedSize = optimizedStats.size;
@@ -287,8 +397,8 @@ async function optimizeTextures(gltfPath, resourceDir) {
         console.log(`${image.uri}`);
         console.log(`${origMB} MB → ${optMB} MB (úspora ${savings}%)`);
 
-        image.uri = `${baseName}_opt.jpg`;
-        image.mimeType = "image/jpeg";
+        image.uri = `${baseName}_opt${outputExt}`;
+        image.mimeType = outputMimeType;
 
         return { originalSize, optimizedSize, skipped: false };
       } catch (err) {
@@ -475,33 +585,43 @@ app.get("/download-chunk/:modelName/:chunkIndex", async (req, res) => {
 
   try {
     const stats = await fsp.stat(chunkPath);
-    const etag = `"${stats.size}-${stats.mtime.getTime()}"`;
+    const acceptEncoding = req.headers["accept-encoding"] || "";
+    let responsePath = chunkPath;
+    let responseStats = stats;
+    let useGzip = false;
+
+    try {
+      if (acceptEncoding.includes("gzip")) {
+        const gzipStats = await fsp.stat(gzipPath);
+        console.log(`Sending compressed chunk ${chunkIndex} for ${modelName}`);
+        responsePath = gzipPath;
+        responseStats = gzipStats;
+        useGzip = true;
+      }
+    } catch {}
+
+    const etag = `"${responseStats.size}-${responseStats.mtime.getTime()}-${useGzip ? "gzip" : "identity"}"`;
 
     res.setHeader("ETag", etag);
-    res.setHeader("Cache-Control", "public, max-age=31536000"); // 1 rok cache
+    res.setHeader("Vary", "Accept-Encoding");
+    res.setHeader("Cache-Control", "public, max-age=31536000");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("X-Original-Size", stats.size);
+    res.setHeader("X-Chunk-Compressed", useGzip ? "true" : "false");
+
+    if (useGzip) {
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("X-Compressed-Size", responseStats.size);
+    }
 
     if (req.headers["if-none-match"] === etag) {
       return res.status(304).end();
     }
 
-    const acceptEncoding = req.headers["accept-encoding"] || "";
-
-    try {
-      const gzipStats = await fsp.stat(gzipPath);
-      if (acceptEncoding.includes("gzip")) {
-        console.log(`Sending compressed chunk ${chunkIndex} for ${modelName}`);
-
-        res.setHeader("X-Chunk-Compressed", "true");
-        res.setHeader("Content-Type", "application/octet-stream");
-        res.setHeader("X-Original-Size", stats.size);
-        res.setHeader("X-Compressed-Size", gzipStats.size);
-
-        return res.sendFile(gzipPath);
-      }
-    } catch {}
-
-    console.log(`Sending uncompressed chunk ${chunkIndex} for ${modelName}`);
-    res.sendFile(chunkPath);
+    console.log(
+      `Sending ${useGzip ? "compressed" : "uncompressed"} chunk ${chunkIndex} for ${modelName}`,
+    );
+    res.sendFile(responsePath);
   } catch {
     return res.status(404).json({
       success: false,
@@ -699,16 +819,19 @@ app.post("/create-all-chunks", async (req, res) => {
     const files = await fsp.readdir(MODELS_DIR);
     const glbFiles = files.filter((f) => f.toLowerCase().endsWith(".glb"));
 
-    const tasks = glbFiles.map(async (file) => {
+    const results = [];
+
+    for (const file of glbFiles) {
       const metadataPath = path.join(METADATA_DIR, `${file}.json`);
 
       try {
         await fsp.access(metadataPath);
-        return {
+        results.push({
           model: file,
           status: "skipped",
           message: "Již má chunky",
-        };
+        });
+        continue;
       } catch {}
 
       try {
@@ -716,22 +839,20 @@ app.post("/create-all-chunks", async (req, res) => {
         console.log(`\nVytváření chunků pro: ${file}`);
         await createChunks(modelPath, file);
 
-        return {
+        results.push({
           model: file,
           status: "success",
           message: "Chunky vytvořeny",
-        };
+        });
       } catch (err) {
         console.error(`Chyba při vytváření chunků pro ${file}:`, err);
-        return {
+        results.push({
           model: file,
           status: "error",
           message: err.message,
-        };
+        });
       }
-    });
-
-    const results = await Promise.all(tasks);
+    }
 
     res.json({
       success: true,
