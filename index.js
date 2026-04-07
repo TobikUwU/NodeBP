@@ -1,12 +1,18 @@
-const express = require("express");
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+import express from "express";
+import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import zlib from "node:zlib";
+import https from "node:https";
+import { promisify } from "node:util";
+import { execSync } from "node:child_process";
+import gltfPipeline from "gltf-pipeline";
+import AdmZip from "adm-zip";
+import sharp from "sharp";
+
 const fsp = fs.promises;
-const crypto = require("crypto");
-const zlib = require("zlib");
-const util = require("util");
-const { execSync } = require("child_process");
+const __dirname = import.meta.dir;
 
 /**
  * Zajistí existenci SSL certifikátů (key.pem, cert.pem) pro HTTPS
@@ -37,17 +43,13 @@ function ensureSslCertificates() {
 // Spustí kontrolu SSL certifikátů na začátku aplikace
 ensureSslCertificates();
 
-const gzip = util.promisify(zlib.gzip);
-const gunzip = util.promisify(zlib.gunzip);
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
+const { gltfToGlb } = gltfPipeline;
 
-const gltfPipeline = require("gltf-pipeline");
-const gltfToGlb = gltfPipeline.gltfToGlb;
-const AdmZip = require("adm-zip");
-const sharp = require("sharp");
-
-const http2Express = require("http2-express");
-const app = http2Express(express);
-const port = 3000;
+const app = express();
+const port = Number(process.env.PORT || 3000);
+const httpsPort = Number(process.env.HTTPS_PORT || 3443);
 
 // Konfigurace
 const UPLOAD_DIR = "./tmp_uploads";
@@ -977,26 +979,31 @@ app.get("/debug-chunk/:modelName/:chunkIndex", async (req, res) => {
 
 // START SERVERU
 
-app.listen(port, "0.0.0.0", () => {
+const httpServer = app.listen(port, "0.0.0.0", () => {
   console.log("\n" + "=".repeat(60));
   console.log(`HTTP/1.1 Server běží na http://0.0.0.0:${port}`);
   console.log("=".repeat(60));
 });
 
-const httpsPort = 3443;
-try {
-  const http2 = require("http2");
+httpServer.on("error", (err) => {
+  console.error("HTTP server se nepodařilo spustit:", err.message);
+});
 
+try {
   const sslOptions = {
     key: fs.readFileSync(path.join(__dirname, "key.pem")),
     cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
-    allowHTTP1: true,
   };
 
-  const http2Server = http2.createSecureServer(sslOptions, app);
+  const httpsServer = https.createServer(sslOptions, app);
 
-  http2Server.listen(httpsPort, "0.0.0.0", () => {
-    console.log(`HTTPS/HTTP2 Server běží na https://0.0.0.0:${httpsPort}`);
+  httpsServer.on("error", (err) => {
+    console.error("HTTPS server se nepodařilo spustit:", err.message);
+    console.log("Server běží pouze na HTTP/1.1\n");
+  });
+
+  httpsServer.listen(httpsPort, "0.0.0.0", () => {
+    console.log(`HTTPS Server běží na https://0.0.0.0:${httpsPort}`);
     console.log("=".repeat(60));
   });
 } catch (err) {
