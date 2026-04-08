@@ -63,7 +63,7 @@
                     📦 3D Model Manager
                 </h1>
                 <p class="lead text-muted">
-                    Optimalizace, komprese a chunking 3D modelů
+                    Optimalizace GLTF modelů pro klientský streaming
                 </p>
             </div>
 
@@ -114,12 +114,9 @@
                                 required
                                 accept=".zip"
                             />
-                            <button
-                                type="submit"
-                                class="btn btn-primary btn-lg"
-                            >
-                                Nahrát a zpracovat
-                            </button>
+                            <div class="small text-muted">
+                                Upload začne automaticky po výběru ZIP souboru.
+                            </div>
                         </form>
                     </div>
 
@@ -159,26 +156,6 @@
                     >
                         <h2 class="h5 mb-0">📚 Dostupné modely</h2>
                         <div class="d-flex gap-2">
-                            <button
-                                class="btn btn-sm btn-outline-warning text-dark"
-                                onclick="createAllChunks(this)"
-                                title="Vytvoří chunky pro modely, které je nemají"
-                            >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    class="bi bi-boxes"
-                                    viewBox="0 0 16 16"
-                                >
-                                    <path
-                                        d="M7.752.066a.5.5 0 0 1 .496 0l3.75 2.143a.5.5 0 0 1 .252.434v3.995l3.498 2A.5.5 0 0 1 16 9.07v4.286a.5.5 0 0 1-.252.434l-3.75 2.143a.5.5 0 0 1-.496 0l-3.502-2-3.502 2.001a.5.5 0 0 1-.496 0l-3.75-2.143A.5.5 0 0 1 0 13.357V9.071a.5.5 0 0 1 .252-.434L3.75 6.638V2.643a.5.5 0 0 1 .252-.434zM4.25 7.504 1.508 9.071l2.742 1.567 2.742-1.567zM7.5 9.933l-2.75 1.571v3.134l2.75-1.571zm1 3.134 2.75 1.571v-3.134L8.5 9.933zm.508-3.996 2.742 1.567 2.742-1.567-2.742-1.567zm2.242-2.433V3.504L8.5 5.076V8.21zM7.5 8.21V5.076L4.75 3.504v3.134zM5.258 2.643 8 4.21l2.742-1.567L8 1.076zM15 9.933l-2.75 1.571v3.134L15 13.067zM3.75 14.638v-3.134L1 9.933v3.134z"
-                                    />
-                                </svg>
-                                Generovat chunky
-                            </button>
-
                             <button
                                 class="btn btn-sm btn-outline-primary"
                                 onclick="fetchAndDisplayModels()"
@@ -225,9 +202,13 @@
             const uploadProgress = document.getElementById("uploadProgress");
             const uploadFileName = document.getElementById("uploadFileName");
             const uploadStats = document.getElementById("uploadStats");
+            let uploadStatusPoller = null;
 
             // --- DRAG & DROP LOGIKA ---
             uploadZone.addEventListener("click", () => modelFileInput.click());
+            uploadForm.addEventListener("click", (event) => {
+                event.stopPropagation();
+            });
             uploadZone.addEventListener("dragover", (e) => {
                 e.preventDefault();
                 uploadZone.classList.add("dragover");
@@ -244,13 +225,80 @@
                 ) {
                     modelFileInput.files = e.dataTransfer.files;
                     uploadFileName.textContent = e.dataTransfer.files[0].name;
+                    uploadSelectedFile();
                 }
             });
             modelFileInput.addEventListener("change", (e) => {
                 if (e.target.files.length > 0) {
                     uploadFileName.textContent = e.target.files[0].name;
+                    uploadSelectedFile();
                 }
             });
+
+            async function readJsonResponse(response) {
+                const text = await response.text();
+
+                if (!text) {
+                    throw new Error(
+                        `Server vrátil prázdnou odpověď (${response.status}).`,
+                    );
+                }
+
+                try {
+                    return JSON.parse(text);
+                } catch {
+                    throw new Error(
+                        `Server vrátil neplatný JSON (${response.status}).`,
+                    );
+                }
+            }
+
+            function renderUploadStatus(status) {
+                if (!status) return;
+
+                const lines = (status.logs || []).slice(-6).map((entry) => {
+                    const time = new Date(entry.time).toLocaleTimeString(
+                        "cs-CZ",
+                    );
+                    return `${time} • ${entry.message}`;
+                });
+
+                uploadStats.innerHTML = `
+                    <div><strong>Fáze:</strong> ${status.phase || "-"}</div>
+                    <div class="mt-1">${status.message || ""}</div>
+                    ${
+                        lines.length > 0
+                            ? `<div class="mt-2 text-start" style="max-height: 140px; overflow: auto; white-space: pre-line;">${lines.join("\n")}</div>`
+                            : ""
+                    }
+                `;
+            }
+
+            async function pollUploadStatus() {
+                try {
+                    const response = await fetch("/upload-status", {
+                        cache: "no-store",
+                    });
+                    if (!response.ok) return;
+                    const data = await readJsonResponse(response);
+                    renderUploadStatus(data.status);
+                } catch (error) {
+                    console.error("Status poll failed", error);
+                }
+            }
+
+            function startUploadStatusPolling() {
+                stopUploadStatusPolling();
+                pollUploadStatus();
+                uploadStatusPoller = setInterval(pollUploadStatus, 1500);
+            }
+
+            function stopUploadStatusPolling() {
+                if (uploadStatusPoller) {
+                    clearInterval(uploadStatusPoller);
+                    uploadStatusPoller = null;
+                }
+            }
 
             // --- NAČTENÍ MODELŮ ---
             async function fetchAndDisplayModels() {
@@ -263,7 +311,7 @@
                 try {
                     const response = await fetch("/models");
                     if (!response.ok) throw new Error("Chyba serveru");
-                    const data = await response.json();
+                    const data = await readJsonResponse(response);
                     const models = data.models || [];
 
                     modelListEl.innerHTML = "";
@@ -288,18 +336,11 @@
                         nameSpan.className = "fw-semibold";
                         nameSpan.textContent = model.name;
 
-                        // Pokud má model chunky, přidáme odznak
                         const badge = document.createElement("span");
-                        badge.className = model.chunked
-                            ? "badge bg-info text-dark badge-chunk ms-2"
-                            : "badge bg-secondary badge-chunk ms-2";
-                        if (model.chunked) {
-                            badge.title = `${model.totalChunks} chunks`;
-                            badge.textContent = `Chunked (${model.totalChunks})`;
-                        } else {
-                            badge.title = "Pouze jeden soubor";
-                            badge.textContent = "Standard";
-                        }
+                        badge.className =
+                            "badge bg-info text-dark badge-chunk ms-2";
+                        badge.title = `Entry file: ${model.entryFile}`;
+                        badge.textContent = model.type?.toUpperCase() || "GLTF";
                         nameSpan.appendChild(document.createTextNode(" "));
                         nameSpan.appendChild(badge);
 
@@ -308,7 +349,7 @@
                         const date = new Date(
                             model.modified,
                         ).toLocaleDateString("cs-CZ");
-                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date}`;
+                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date} • ${model.entryFile}`;
 
                         infoDiv.appendChild(nameSpan);
                         infoDiv.appendChild(sizeSpan);
@@ -318,10 +359,14 @@
                         actionsDiv.className = "d-flex gap-2";
 
                         const downloadBtn = document.createElement("a");
-                        downloadBtn.href = `/download-model/${encodedModelName}`;
+                        downloadBtn.href =
+                            model.entryUrl ||
+                            `/download-model/${encodedModelName}`;
                         downloadBtn.className = "btn btn-success btn-sm";
-                        downloadBtn.innerHTML = "⬇";
-                        downloadBtn.title = "Stáhnout GLB";
+                        downloadBtn.innerHTML = "↗";
+                        downloadBtn.target = "_blank";
+                        downloadBtn.rel = "noopener noreferrer";
+                        downloadBtn.title = "Otevřít entry GLTF";
 
                         const deleteBtn = document.createElement("button");
                         deleteBtn.className = "btn btn-outline-danger btn-sm";
@@ -338,53 +383,6 @@
                     });
                 } catch (error) {
                     modelListEl.innerHTML = `<li class="list-group-item list-group-item-danger">Chyba: ${error.message}</li>`;
-                }
-            }
-
-            // --- VYTVOŘENÍ VŠECH CHUNKŮ ---
-            async function createAllChunks(btn) {
-                if (
-                    !confirm(
-                        "Opravdu chcete vygenerovat chunky pro všechny modely, které je ještě nemají?",
-                    )
-                )
-                    return;
-
-                const originalText = btn.innerHTML;
-                btn.disabled = true;
-                btn.innerHTML =
-                    '<span class="spinner-border spinner-border-sm"></span> Pracuji...';
-
-                try {
-                    const res = await fetch("/create-all-chunks", {
-                        method: "POST",
-                    });
-                    const data = await res.json();
-
-                    if (data.success) {
-                        const successCount = data.results.filter(
-                            (r) => r.status === "success",
-                        ).length;
-                        const skippedCount = data.results.filter(
-                            (r) => r.status === "skipped",
-                        ).length;
-                        const errorCount = data.results.filter(
-                            (r) => r.status === "error",
-                        ).length;
-
-                        alert(
-                            `Dokončeno!\n\n✅ Vytvořeno: ${successCount}\n⏭️ Přeskočeno (již existuje): ${skippedCount}\n❌ Chyby: ${errorCount}`,
-                        );
-                        fetchAndDisplayModels(); // Obnovit seznam pro zobrazení badge
-                    } else {
-                        alert("Chyba: " + data.message);
-                    }
-                } catch (e) {
-                    alert("Chyba komunikace se serverem.");
-                    console.error(e);
-                } finally {
-                    btn.disabled = false;
-                    btn.innerHTML = originalText;
                 }
             }
 
@@ -406,8 +404,7 @@
             }
 
             // --- UPLOAD HANDLER ---
-            uploadForm.addEventListener("submit", async (event) => {
-                event.preventDefault();
+            async function uploadSelectedFile() {
                 const file = modelFileInput.files[0];
                 if (!file) return;
 
@@ -418,6 +415,8 @@
                 uploadStatusEl.innerHTML = "";
                 progressBar.style.width = "0%";
                 uploadProgress.textContent = "0%";
+                uploadStats.textContent = "Čekám na zahájení uploadu...";
+                startUploadStatusPolling();
 
                 // Fake progress (protože fetch neumí nativně upload progress)
                 let simulatedProgress = 0;
@@ -438,17 +437,19 @@
                     });
 
                     clearInterval(progressInterval);
+                    stopUploadStatusPolling();
                     progressBar.style.width = "100%";
                     uploadProgress.textContent = "100%";
 
-                    const result = await response.json();
+                    const result = await readJsonResponse(response);
 
                     if (result.success) {
                         uploadStatusEl.innerHTML = `
                         <div class="alert alert-success">
-                            ✅ Model nahrán a zpracován!<br>
+                            ✅ Model nahrán a připraven pro streaming!<br>
                             Velikost: <strong>${result.sizeInMB} MB</strong><br>
-                            Chunky: <strong>${result.metadata.totalChunks}</strong>
+                            Entry: <strong>${result.metadata.entryFile}</strong><br>
+                            LODs: <strong>${(result.metadata.lods || []).map((lod) => lod.name).join(", ")}</strong>
                         </div>`;
                         fetchAndDisplayModels();
                         setTimeout(
@@ -460,10 +461,16 @@
                     }
                 } catch (error) {
                     clearInterval(progressInterval);
+                    stopUploadStatusPolling();
                     uploadStatusEl.innerHTML = `<div class="alert alert-danger">❌ Chyba: ${error.message}</div>`;
                 }
                 uploadForm.reset();
                 uploadFileName.textContent = "";
+            }
+
+            uploadForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                await uploadSelectedFile();
             });
 
             // Start

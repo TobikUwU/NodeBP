@@ -24,9 +24,13 @@
   },
   "homepage": "https://github.com/TobikUwU/BackendBP#readme",
   "dependencies": {
-    "adm-zip": "^0.5.16",
-    "gltf-pipeline": "^4.3.0",
-    "sharp": "^0.34.5"
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0",
+    "busboy": "^1.6.0",
+    "meshoptimizer": "^1.1.0",
+    "sharp": "^0.34.5",
+    "unzipper": "^0.12.3"
   },
   "trustedDependencies": [
     "protobufjs",
