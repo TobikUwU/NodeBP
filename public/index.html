@@ -63,7 +63,7 @@
                     📦 3D Model Manager
                 </h1>
                 <p class="lead text-muted">
-                    Optimalizace GLTF modelů pro klientský streaming
+                    Hybridní overview + tile streaming pro mobilní Filament klient
                 </p>
             </div>
 
@@ -79,7 +79,7 @@
                     "
                 >
                     <h2 class="h5 mb-0">
-                        📤 Nahrát model (ZIP s GLTF + textury)
+                        📤 Nahrát model (ZIP balík nebo přímé GLB)
                     </h2>
                 </div>
                 <div class="card-body">
@@ -101,7 +101,7 @@
                                 d="M7.646 4.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 5.707V14.5a.5.5 0 0 1-1 0V5.707L5.354 7.854a.5.5 0 1 1-.708-.708z"
                             />
                         </svg>
-                        <h5 class="mb-2">Přetáhněte ZIP soubor sem</h5>
+                        <h5 class="mb-2">Přetáhněte ZIP nebo GLB soubor sem</h5>
                         <p class="text-muted mb-3">
                             nebo klikněte pro výběr souboru
                         </p>
@@ -112,10 +112,10 @@
                                 id="modelFile"
                                 name="modelZip"
                                 required
-                                accept=".zip"
+                                accept=".zip,.glb"
                             />
                             <div class="small text-muted">
-                                Upload začne automaticky po výběru ZIP souboru.
+                                Upload začne automaticky po výběru ZIP nebo GLB souboru.
                             </div>
                         </form>
                     </div>
@@ -221,7 +221,11 @@
                 uploadZone.classList.remove("dragover");
                 if (
                     e.dataTransfer.files.length > 0 &&
-                    e.dataTransfer.files[0].name.endsWith(".zip")
+                    [".zip", ".glb"].some((extension) =>
+                        e.dataTransfer.files[0].name
+                            .toLowerCase()
+                            .endsWith(extension),
+                    )
                 ) {
                     modelFileInput.files = e.dataTransfer.files;
                     uploadFileName.textContent = e.dataTransfer.files[0].name;
@@ -349,7 +353,11 @@
                         const date = new Date(
                             model.modified,
                         ).toLocaleDateString("cs-CZ");
-                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date} • ${model.entryFile}`;
+                        const stageCount =
+                            model.overviewStageCount ||
+                            (model.upgradeOrder || []).length;
+                        const tileCount = model.tileCount || 0;
+                        sizeSpan.textContent = `${model.sizeInMB} MB • ${date} • ${model.entryFile} • ${stageCount} overview • ${tileCount} tiles • ${model.streamingStrategy || "hybrid_overview_tiles"}`;
 
                         infoDiv.appendChild(nameSpan);
                         infoDiv.appendChild(sizeSpan);
@@ -366,7 +374,17 @@
                         downloadBtn.innerHTML = "↗";
                         downloadBtn.target = "_blank";
                         downloadBtn.rel = "noopener noreferrer";
-                        downloadBtn.title = "Otevřít entry GLTF";
+                        downloadBtn.title = "Otevřít entry stage";
+
+                        const manifestBtn = document.createElement("a");
+                        manifestBtn.href =
+                            model.manifestUrl ||
+                            `/stream-manifest/${encodedModelName}`;
+                        manifestBtn.className = "btn btn-outline-primary btn-sm";
+                        manifestBtn.innerHTML = "{}";
+                        manifestBtn.target = "_blank";
+                        manifestBtn.rel = "noopener noreferrer";
+                        manifestBtn.title = "Otevřít streaming manifest";
 
                         const deleteBtn = document.createElement("button");
                         deleteBtn.className = "btn btn-outline-danger btn-sm";
@@ -375,6 +393,7 @@
                         deleteBtn.onclick = () => deleteModel(model.name);
 
                         actionsDiv.appendChild(downloadBtn);
+                        actionsDiv.appendChild(manifestBtn);
                         actionsDiv.appendChild(deleteBtn);
 
                         li.appendChild(infoDiv);
@@ -449,7 +468,10 @@
                             ✅ Model nahrán a připraven pro streaming!<br>
                             Velikost: <strong>${result.sizeInMB} MB</strong><br>
                             Entry: <strong>${result.metadata.entryFile}</strong><br>
-                            LODs: <strong>${(result.metadata.lods || []).map((lod) => lod.name).join(", ")}</strong>
+                            Overview stages: <strong>${(result.metadata.overviewStages || []).length}</strong><br>
+                            Detail tiles: <strong>${result.metadata.tileCount || 0}</strong><br>
+                            Manifest: <strong>${result.metadata.manifestUrl}</strong><br>
+                            Bootstrap: <strong>${result.metadata.bootstrapUrl}</strong>
                         </div>`;
                         fetchAndDisplayModels();
                         setTimeout(

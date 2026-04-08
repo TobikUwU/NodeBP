@@ -3,11 +3,13 @@ import fs from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { execSync } from "node:child_process";
-import { NodeIO } from "@gltf-transform/core";
+import { Document, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import {
   cloneDocument,
+  copyToDocument,
   dedup,
+  getBounds,
   prune,
   reorder,
   simplify,
@@ -59,11 +61,12 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const MODELS_DIR = path.join(__dirname, "public", "models");
 const METADATA_DIR = path.join(__dirname, "public", "metadata");
 const MAX_UPLOAD_SIZE = 5 * 1024 * 1024 * 1024;
-const LOD_CONFIGS = [
-  { name: "lod0", suffix: "", ratio: 0.45, error: 0.015 },
-  { name: "lod1", suffix: ".lod1", ratio: 0.2, error: 0.03 },
-  { name: "lod2", suffix: ".lod2", ratio: 0.08, error: 0.06 },
+const OVERVIEW_STAGES = [
+  { id: "overview-lod0", file: "overview.lod0.glb", ratio: 0.45, error: 0.015 },
+  { id: "overview-lod1", file: "overview.lod1.glb", ratio: 0.2, error: 0.03 },
+  { id: "overview-lod2", file: "overview.lod2.glb", ratio: 0.08, error: 0.06 },
 ];
+const TILE_STAGE = { id: "tile-detail", ratio: 0.75, error: 0.01 };
 const uploadStatus = {
   active: false,
   phase: "idle",
@@ -114,23 +117,505 @@ async function getDirectorySize(dirPath) {
   return stats.reduce((sum, stat) => sum + stat.size, 0);
 }
 
-async function writeModelMetadata(modelName, lods, modelDir) {
-  const baseLod = lods[0];
-  const stats = await fsp.stat(path.join(modelDir, baseLod.file));
+async function getRelativeFiles(dirPath) {
+  const files = await getAllFiles(dirPath);
+  return files.map((filePath) => path.relative(dirPath, filePath));
+}
+
+function cloneExtensions(sourceDocument, targetDocument) {
+  for (const sourceExtension of sourceDocument.getRoot().listExtensionsUsed()) {
+    const targetExtension = targetDocument.createExtension(
+      sourceExtension.constructor,
+    );
+    targetExtension.setRequired(sourceExtension.isRequired());
+  }
+}
+
+async function writeDocumentAsGlb(outputPath, document) {
+  const glb = await io.writeBinary(document);
+  await fsp.writeFile(outputPath, glb);
+}
+
+function getBoundsInfo(min, max) {
+  const center = min.map((value, index) => (value + max[index]) / 2);
+  const radius = Math.sqrt(
+    min.reduce((sum, value, index) => {
+      const delta = max[index] - value;
+      return sum + delta * delta;
+    }, 0),
+  ) / 2;
+
+  return {
+    min,
+    max,
+    center,
+    radius,
+  };
+}
+
+function mergeBounds(boundsList) {
+  if (!boundsList.length) {
+    return null;
+  }
+
+  const min = [...boundsList[0].min];
+  const max = [...boundsList[0].max];
+
+  for (const bounds of boundsList.slice(1)) {
+    for (let index = 0; index < 3; index += 1) {
+      min[index] = Math.min(min[index], bounds.min[index]);
+      max[index] = Math.max(max[index], bounds.max[index]);
+    }
+  }
+
+  return getBoundsInfo(min, max);
+}
+
+function countPrimitiveTriangles(primitive) {
+  const indices = primitive.getIndices();
+  const positions = primitive.getAttribute("POSITION");
+  const vertexCount = indices?.getCount() ?? positions?.getCount() ?? 0;
+
+  switch (primitive.getMode()) {
+    case 5:
+    case 6:
+      return Math.max(vertexCount - 2, 0);
+    case 4:
+    default:
+      return Math.floor(vertexCount / 3);
+  }
+}
+
+function getMeshStatsFromNode(node) {
+  const mesh = node.getMesh();
+
+  if (!mesh) {
+    return {
+      primitiveCount: 0,
+      triangleCount: 0,
+      materialCount: 0,
+    };
+  }
+
+  const materials = new Set();
+  let primitiveCount = 0;
+  let triangleCount = 0;
+
+  for (const primitive of mesh.listPrimitives()) {
+    primitiveCount += 1;
+    triangleCount += countPrimitiveTriangles(primitive);
+
+    const material = primitive.getMaterial();
+    if (material) {
+      materials.add(material);
+    }
+  }
+
+  return {
+    primitiveCount,
+    triangleCount,
+    materialCount: materials.size,
+  };
+}
+
+function getDocumentMeshStats(document) {
+  const root = document.getRoot();
+  const scene = root.getDefaultScene() || root.listScenes()[0];
+
+  if (!scene) {
+    return {
+      nodeCount: 0,
+      meshNodeCount: 0,
+      primitiveCount: 0,
+      triangleCount: 0,
+      materialCount: 0,
+    };
+  }
+
+  const materials = new Set();
+  let nodeCount = 0;
+  let meshNodeCount = 0;
+  let primitiveCount = 0;
+  let triangleCount = 0;
+
+  const visit = (node) => {
+    nodeCount += 1;
+
+    const meshStats = getMeshStatsFromNode(node);
+    if (meshStats.primitiveCount > 0) {
+      meshNodeCount += 1;
+      primitiveCount += meshStats.primitiveCount;
+      triangleCount += meshStats.triangleCount;
+
+      const mesh = node.getMesh();
+      for (const primitive of mesh.listPrimitives()) {
+        const material = primitive.getMaterial();
+        if (material) {
+          materials.add(material);
+        }
+      }
+    }
+
+    for (const child of node.listChildren()) {
+      visit(child);
+    }
+  };
+
+  for (const child of scene.listChildren()) {
+    visit(child);
+  }
+
+  return {
+    nodeCount,
+    meshNodeCount,
+    primitiveCount,
+    triangleCount,
+    materialCount: materials.size,
+  };
+}
+
+function buildTileStreamingPlan(tiles) {
+  const childMap = new Map();
+
+  for (const tile of tiles) {
+    if (!tile.parentId) {
+      continue;
+    }
+
+    if (!childMap.has(tile.parentId)) {
+      childMap.set(tile.parentId, []);
+    }
+
+    childMap.get(tile.parentId).push(tile.id);
+  }
+
+  const traversalOrder = [...tiles]
+    .sort((left, right) => {
+      if (left.depth !== right.depth) {
+        return left.depth - right.depth;
+      }
+
+      if (left.bounds.radius !== right.bounds.radius) {
+        return right.bounds.radius - left.bounds.radius;
+      }
+
+      if (left.size !== right.size) {
+        return right.size - left.size;
+      }
+
+      return left.id.localeCompare(right.id);
+    })
+    .map((tile) => tile.id);
+
+  const priorityMap = new Map(
+    traversalOrder.map((tileId, index) => [tileId, index + 1]),
+  );
+
+  return {
+    traversalOrder,
+    tiles: tiles.map((tile) => ({
+      ...tile,
+      children: childMap.get(tile.id) || [],
+      priority: priorityMap.get(tile.id),
+      screenCoverageHint: Number(
+        (tile.bounds.radius * Math.max(1, 3 - tile.depth)).toFixed(4),
+      ),
+    })),
+  };
+}
+
+function collectTileCandidates(sourceDocument) {
+  const root = sourceDocument.getRoot();
+  const scene = root.getDefaultScene() || root.listScenes()[0];
+
+  if (!scene) {
+    return [];
+  }
+
+  const candidates = [];
+  let index = 0;
+
+  const visit = (node, depth, parentTileId) => {
+    let currentParentTileId = parentTileId;
+
+    if (node.getMesh()) {
+      const { min, max } = getBounds(node);
+      const tileId = `tile-${index++}`;
+      candidates.push({
+        id: tileId,
+        node,
+        name: node.getName() || tileId,
+        depth,
+        parentId: parentTileId,
+        bounds: getBoundsInfo(min, max),
+      });
+      currentParentTileId = tileId;
+    }
+
+    for (const child of node.listChildren()) {
+      visit(child, depth + 1, currentParentTileId);
+    }
+  };
+
+  for (const child of scene.listChildren()) {
+    visit(child, 0, null);
+  }
+
+  return candidates;
+}
+
+async function createTileDocument(sourceDocument, sourceNode) {
+  const tileDocument = new Document();
+  cloneExtensions(sourceDocument, tileDocument);
+
+  const tileScene = tileDocument.createScene("TileScene");
+  const map = copyToDocument(tileDocument, sourceDocument, [sourceNode]);
+  const tileNode = map.get(sourceNode);
+
+  if (!tileNode) {
+    throw new Error("Nepodařilo se zkopírovat tile node.");
+  }
+
+  tileNode.setMatrix(sourceNode.getWorldMatrix());
+  tileScene.addChild(tileNode);
+
+  return tileDocument;
+}
+
+async function buildOverviewStages(sourceDocument, modelDir) {
+  const overviewDir = path.join(modelDir, "overview");
+  await fsp.mkdir(overviewDir, { recursive: true });
+
+  const stages = [];
+
+  for (const stage of OVERVIEW_STAGES) {
+    try {
+      const stageDocument = cloneDocument(sourceDocument);
+      await stageDocument.transform(
+        weld(),
+        simplify({
+          simplifier: MeshoptSimplifier,
+          ratio: stage.ratio,
+          error: stage.error,
+        }),
+        dedup(),
+        prune(),
+        reorder({ encoder: MeshoptEncoder, target: "size" }),
+      );
+      const meshStats = getDocumentMeshStats(stageDocument);
+
+      const relativePath = path.join("overview", stage.file);
+      const absolutePath = path.join(modelDir, relativePath);
+      await writeDocumentAsGlb(absolutePath, stageDocument);
+      const stats = await fsp.stat(absolutePath);
+
+      stages.push({
+        id: stage.id,
+        file: relativePath,
+        url: `/models/${path.basename(modelDir)}/${relativePath}`,
+        size: stats.size,
+        ratio: stage.ratio,
+        error: stage.error,
+        geometricError: Number((stage.error * 100).toFixed(4)),
+        triangleCount: meshStats.triangleCount,
+        primitiveCount: meshStats.primitiveCount,
+        meshNodeCount: meshStats.meshNodeCount,
+      });
+    } catch (error) {
+      console.error(`Overview stage ${stage.id} se nepodařilo vytvořit:`, error);
+    }
+  }
+
+  if (stages.length === 0) {
+    throw new Error("Nepodařilo se vytvořit žádný overview stage.");
+  }
+
+  return stages;
+}
+
+async function buildDetailTiles(
+  sourceDocument,
+  modelDir,
+  tileCandidates = collectTileCandidates(sourceDocument),
+) {
+  const tilesDir = path.join(modelDir, "tiles");
+  await fsp.mkdir(tilesDir, { recursive: true });
+
+  const tiles = [];
+
+  for (const candidate of tileCandidates) {
+    try {
+      const tileDocument = await createTileDocument(sourceDocument, candidate.node);
+      await tileDocument.transform(
+        weld(),
+        simplify({
+          simplifier: MeshoptSimplifier,
+          ratio: TILE_STAGE.ratio,
+          error: TILE_STAGE.error,
+        }),
+        dedup(),
+        prune(),
+        reorder({ encoder: MeshoptEncoder, target: "size" }),
+      );
+      const meshStats = getDocumentMeshStats(tileDocument);
+
+      const relativePath = path.join("tiles", `${candidate.id}.glb`);
+      const absolutePath = path.join(modelDir, relativePath);
+      await writeDocumentAsGlb(absolutePath, tileDocument);
+      const stats = await fsp.stat(absolutePath);
+
+      tiles.push({
+        id: candidate.id,
+        parentId: candidate.parentId,
+        name: candidate.name,
+        depth: candidate.depth,
+        refinement: "replace",
+        format: "glb",
+        file: relativePath,
+        url: `/models/${path.basename(modelDir)}/${relativePath}`,
+        size: stats.size,
+        ratio: TILE_STAGE.ratio,
+        error: TILE_STAGE.error,
+        geometricError: Number((candidate.bounds.radius * TILE_STAGE.error).toFixed(4)),
+        bounds: candidate.bounds,
+        triangleCount: meshStats.triangleCount,
+        primitiveCount: meshStats.primitiveCount,
+        meshNodeCount: meshStats.meshNodeCount,
+      });
+    } catch (error) {
+      console.error(`Tile ${candidate.id} se nepodařilo vytvořit:`, error);
+    }
+  }
+
+  return tiles;
+}
+
+async function buildStreamingPackage(modelName, sourceDocument, modelDir) {
+  await MeshoptEncoder.ready;
+  await MeshoptSimplifier.ready;
+
+  const tileCandidates = collectTileCandidates(sourceDocument);
+  const sourceStats = getDocumentMeshStats(sourceDocument);
+  const sceneBounds = mergeBounds(tileCandidates.map((candidate) => candidate.bounds));
+  const overviewStages = await buildOverviewStages(sourceDocument, modelDir);
+  const rawDetailTiles = await buildDetailTiles(
+    sourceDocument,
+    modelDir,
+    tileCandidates,
+  );
+  const detailTilePlan = buildTileStreamingPlan(rawDetailTiles);
+  const detailTiles = detailTilePlan.tiles;
+  const entryStage =
+    overviewStages[overviewStages.length - 1] || overviewStages[0] || null;
+  const rootTiles = detailTiles
+    .filter((tile) => tile.parentId === null)
+    .map((tile) => tile.id);
+  const upgradeOrder = [...overviewStages].reverse().map((stage) => stage.id);
+
+  const allFiles = await getRelativeFiles(modelDir);
+  const referencedFiles = new Set([
+    ...overviewStages.map((stage) => stage.file),
+    ...detailTiles.map((tile) => tile.file),
+  ]);
+
+  const sharedResources = await Promise.all(
+    allFiles
+      .filter((file) => !referencedFiles.has(file))
+      .map(async (file) => {
+        const absolutePath = path.join(modelDir, file);
+        const stats = await fsp.stat(absolutePath);
+        return {
+          path: file,
+          url: `/models/${modelName}/${file}`,
+          size: stats.size,
+          type: path.extname(file).toLowerCase().slice(1) || "bin",
+        };
+      }),
+  );
+
+  const manifest = {
+    version: 3,
+    strategy: "hybrid_overview_tiles",
+    modelName,
+    delivery: {
+      transport: "http-pull",
+      bootstrapFormat: "json",
+      overviewFormat: "glb",
+      tileFormat: "glb",
+    },
+    renderer: "filament",
+    intendedClient: "mobile",
+    acceptedUploadFormats: ["zip:gltf-package", "zip:glb-package", "glb"],
+    entryStage: entryStage?.id || null,
+    upgradeOrder,
+    bootstrap: {
+      url: `/stream-bootstrap/${modelName}`,
+      firstFrameStageId: entryStage?.id || null,
+      firstFrameUrl: entryStage?.url || null,
+      firstFrameSize: entryStage?.size || 0,
+      overviewUpgradeOrder: upgradeOrder,
+      rootTileCount: rootTiles.length,
+    },
+    scene: {
+      bounds: sceneBounds,
+      stats: sourceStats,
+    },
+    overview: {
+      activeStageLimit: 1,
+      stages: overviewStages.map((stage) => ({
+        ...stage,
+        firstFrameCandidate: stage.id === entryStage?.id,
+      })),
+    },
+    tiles: detailTiles,
+    rootTiles,
+    tileTraversalOrder: detailTilePlan.traversalOrder,
+    sharedResources,
+    clientBudgets: {
+      recommendedMaxResidentOverviewStages: 1,
+      recommendedMaxActiveTiles: Math.min(Math.max(rootTiles.length * 4, 12), 48),
+      recommendedConcurrentTileRequests: 4,
+    },
+    hints: {
+      notes: [
+        "Load the lightest overview stage first for fastest first frame.",
+        "Keep a single overview stage resident while detail tiles progressively replace visible regions.",
+        "Prioritize root tiles first, then descend into children using camera distance, bounds radius and screen coverage.",
+      ],
+    },
+    generatedAt: new Date().toISOString(),
+  };
+
+  await fsp.writeFile(
+    path.join(modelDir, "stream.manifest.json"),
+    JSON.stringify(manifest, null, 2),
+  );
+
+  return manifest;
+}
+
+async function writeModelMetadata(modelName, modelDir, manifest) {
+  const entryStage =
+    manifest.overview.stages.find((stage) => stage.id === manifest.entryStage) ||
+    manifest.overview.stages[manifest.overview.stages.length - 1] ||
+    manifest.overview.stages[0];
+  const stats = await fsp.stat(path.join(modelDir, entryStage.file));
   const totalSize = await getDirectorySize(modelDir);
   const metadata = {
     modelName,
-    type: "gltf",
-    entryFile: baseLod.file,
-    entryUrl: `/models/${modelName}/${baseLod.file}`,
+    type: "mesh-stream-package",
+    entryFile: entryStage.file,
+    entryUrl: entryStage.url,
     assetDirectory: `/models/${modelName}/`,
-    lods: lods.map((lod) => ({
-      name: lod.name,
-      file: lod.file,
-      url: `/models/${modelName}/${lod.file}`,
-      ratio: lod.ratio,
-      error: lod.error,
-    })),
+    manifestUrl: `/models/${modelName}/stream.manifest.json`,
+    bootstrapUrl: `/stream-bootstrap/${modelName}`,
+    streamingStrategy: manifest.strategy,
+    entryStage: manifest.entryStage,
+    upgradeOrder: manifest.upgradeOrder,
+    overviewStages: manifest.overview.stages,
+    tileCount: manifest.tiles.length,
+    sceneBounds: manifest.scene.bounds,
+    sceneStats: manifest.scene.stats,
     size: totalSize,
     sizeInMB: parseFloat((totalSize / 1024 / 1024).toFixed(2)),
     created: new Date().toISOString(),
@@ -271,7 +756,7 @@ function collectDataTextureImageIndices(gltf) {
   return dataTextureImages;
 }
 
-// CHUNKING SYSTÉM JE VYPNUTÝ. Backend nyní ukládá GLTF + assety.
+// Legacy chunk endpointy jsou vypnuté. Backend nyní generuje overview + detail tiles.
 
 // OPTIMALIZACE TEXTUR
 
@@ -412,49 +897,6 @@ async function optimizeTextures(gltfPath, resourceDir) {
   }
 }
 
-async function buildStreamingPackage(modelName, gltfPath, outputDir) {
-  await MeshoptEncoder.ready;
-  await MeshoptSimplifier.ready;
-
-  const sourceDocument = await io.read(gltfPath);
-  const writtenLods = [];
-
-  for (const lodConfig of LOD_CONFIGS) {
-    try {
-      const lodDocument = cloneDocument(sourceDocument);
-
-      await lodDocument.transform(
-        weld(),
-        simplify({
-          simplifier: MeshoptSimplifier,
-          ratio: lodConfig.ratio,
-          error: lodConfig.error,
-        }),
-        dedup(),
-        prune(),
-        reorder({ encoder: MeshoptEncoder, target: "size" }),
-      );
-
-      const fileName = `${modelName}${lodConfig.suffix}.gltf`;
-      await io.write(path.join(outputDir, fileName), lodDocument);
-      writtenLods.push({
-        name: lodConfig.name,
-        file: fileName,
-        ratio: lodConfig.ratio,
-        error: lodConfig.error,
-      });
-    } catch (error) {
-      console.error(`LOD ${lodConfig.name} se nepodařilo vytvořit:`, error);
-    }
-  }
-
-  if (writtenLods.length === 0) {
-    throw new Error("Nepodařilo se vytvořit žádnou GLTF variantu.");
-  }
-
-  return writtenLods;
-}
-
 // BUN SERVER
 
 function jsonResponse(data, status = 200, headers = {}) {
@@ -476,7 +918,7 @@ async function pathExists(targetPath) {
   }
 }
 
-async function saveUploadedZip(request, targetPath) {
+async function saveUploadedSource(request, targetDir) {
   if (!request.body) {
     throw new Error("Požadavek neobsahuje upload data.");
   }
@@ -488,7 +930,7 @@ async function saveUploadedZip(request, targetPath) {
 
   const headers = Object.fromEntries(request.headers.entries());
 
-  await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const busboy = Busboy({
       headers,
       limits: {
@@ -500,6 +942,8 @@ async function saveUploadedZip(request, targetPath) {
     let fileFound = false;
     let fileWritePromise = null;
     let uploadError = null;
+    let uploadedFilePath = null;
+    let uploadedFileName = null;
 
     busboy.on("file", (fieldName, file, info) => {
       if (fieldName !== "modelZip") {
@@ -508,24 +952,30 @@ async function saveUploadedZip(request, targetPath) {
       }
 
       if (fileFound) {
-        uploadError = new Error("Je povolen pouze jeden ZIP soubor.");
+        uploadError = new Error("Je povolen pouze jeden soubor modelu.");
         file.resume();
         return;
       }
 
       fileFound = true;
 
-      if (info.filename && !info.filename.toLowerCase().endsWith(".zip")) {
-        uploadError = new Error("Nahraný soubor musí mít příponu .zip.");
+      const extension = path.extname(info.filename || "").toLowerCase();
+      if (extension !== ".zip" && extension !== ".glb") {
+        uploadError = new Error(
+          "Nahraný soubor musí mít příponu .zip nebo .glb.",
+        );
         file.resume();
         return;
       }
 
+      uploadedFileName = info.filename || `upload${extension}`;
+      uploadedFilePath = path.join(targetDir, uploadedFileName);
+
       file.on("limit", () => {
-        uploadError = new Error("ZIP soubor je příliš velký.");
+        uploadError = new Error("Nahraný soubor je příliš velký.");
       });
 
-      const output = fs.createWriteStream(targetPath);
+      const output = fs.createWriteStream(uploadedFilePath);
       fileWritePromise = pipeline(file, output);
       fileWritePromise.catch((err) => {
         uploadError ??= err;
@@ -533,7 +983,7 @@ async function saveUploadedZip(request, targetPath) {
     });
 
     busboy.on("filesLimit", () => {
-      uploadError = new Error("Je povolen pouze jeden ZIP soubor.");
+      uploadError = new Error("Je povolen pouze jeden soubor modelu.");
     });
 
     busboy.on("error", reject);
@@ -541,7 +991,7 @@ async function saveUploadedZip(request, targetPath) {
     busboy.on("close", async () => {
       try {
         if (!fileFound) {
-          throw new Error("Nebyl nahrán žádný ZIP soubor.");
+          throw new Error("Nebyl nahrán žádný soubor modelu.");
         }
 
         if (fileWritePromise) {
@@ -552,7 +1002,11 @@ async function saveUploadedZip(request, targetPath) {
           throw uploadError;
         }
 
-        resolve();
+        resolve({
+          filePath: uploadedFilePath,
+          fileName: uploadedFileName,
+          extension: path.extname(uploadedFileName).toLowerCase(),
+        });
       } catch (err) {
         reject(err);
       }
@@ -569,16 +1023,30 @@ async function extractZipArchive(zipPath, targetDir) {
     .promise();
 }
 
+async function normalizeSourceToGltfPackage(sourcePath, workspaceDir) {
+  const extension = path.extname(sourcePath).toLowerCase();
+
+  if (extension === ".gltf") {
+    return sourcePath;
+  }
+
+  if (extension !== ".glb") {
+    throw new Error("Nepodporovaný vstupní formát modelu.");
+  }
+
+  const modelName = path.parse(sourcePath).name;
+  const normalizedPath = path.join(workspaceDir, `${modelName}.gltf`);
+  const document = await io.read(sourcePath);
+  await io.write(normalizedPath, document);
+  return normalizedPath;
+}
+
 function decodeParam(value) {
   try {
     return decodeURIComponent(value);
   } catch {
     return value;
   }
-}
-
-function buildEtag(...parts) {
-  return `"${parts.join("-")}"`;
 }
 
 function resolvePublicPath(pathname) {
@@ -636,7 +1104,7 @@ async function serveStatic(pathname) {
 
 async function handleUploadModel(request) {
   let tempDir = null;
-  let uploadedZipPath = null;
+  let uploadedSource = null;
 
   const cleanup = async () => {
     if (tempDir) {
@@ -657,26 +1125,51 @@ async function handleUploadModel(request) {
 
     const tempDirPrefix = path.join(UPLOAD_DIR, "model-");
     tempDir = fs.mkdtempSync(tempDirPrefix);
-    uploadedZipPath = path.join(tempDir, "upload.zip");
 
-    await saveUploadedZip(request, uploadedZipPath);
-    pushUploadLog("ZIP soubor uložen na disk, rozbaluji archiv.", "extracting");
-    await extractZipArchive(uploadedZipPath, tempDir);
-    console.log("ZIP soubor rozbalen");
+    uploadedSource = await saveUploadedSource(request, tempDir);
 
-    const allFiles = await getAllFiles(tempDir);
-    const gltfFilePath = allFiles.find((file) =>
-      file.toLowerCase().endsWith(".gltf"),
-    );
+    let gltfFilePath = null;
 
-    if (!gltfFilePath) {
-      await cleanup();
-      return jsonResponse(
-        {
-          success: false,
-          message: "ZIP musí obsahovat .gltf soubor!",
-        },
-        400,
+    if (uploadedSource.extension === ".zip") {
+      pushUploadLog(
+        "ZIP soubor uložen na disk, rozbaluji archiv.",
+        "extracting",
+      );
+      await extractZipArchive(uploadedSource.filePath, tempDir);
+      console.log("ZIP soubor rozbalen");
+
+      const allFiles = await getAllFiles(tempDir);
+      const sourceModelPath =
+        allFiles.find((file) => file.toLowerCase().endsWith(".gltf")) ||
+        allFiles.find((file) => file.toLowerCase().endsWith(".glb"));
+
+      if (!sourceModelPath) {
+        await cleanup();
+        return jsonResponse(
+          {
+            success: false,
+            message: "ZIP musí obsahovat .gltf nebo .glb soubor!",
+          },
+          400,
+        );
+      }
+
+      if (sourceModelPath.toLowerCase().endsWith(".glb")) {
+        pushUploadLog(
+          `GLB nalezen: ${path.basename(sourceModelPath)}. Převádím ho na GLTF package.`,
+          "converting",
+        );
+      }
+
+      gltfFilePath = await normalizeSourceToGltfPackage(sourceModelPath, tempDir);
+    } else {
+      pushUploadLog(
+        `GLB soubor uložen na disk: ${uploadedSource.fileName}. Převádím ho na GLTF package.`,
+        "converting",
+      );
+      gltfFilePath = await normalizeSourceToGltfPackage(
+        uploadedSource.filePath,
+        tempDir,
       );
     }
 
@@ -692,26 +1185,34 @@ async function handleUploadModel(request) {
 
     console.log("\nOptimalizace textur");
     await optimizeTextures(gltfFilePath, resourceDir);
+    const sourceDocument = await io.read(gltfFilePath);
     pushUploadLog(
-      "Textury hotové. Generuji čistý GLTF balíček a LOD varianty.",
+      "Textury hotové. Generuji overview stages, detail tiles a klientský bootstrap manifest.",
       "saving",
     );
     await fsp.rm(outputDir, { recursive: true, force: true });
     await fsp.mkdir(outputDir, { recursive: true });
-    const lods = await buildStreamingPackage(modelName, gltfFilePath, outputDir);
-    const metadata = await writeModelMetadata(modelName, lods, outputDir);
+    const manifest = await buildStreamingPackage(
+      modelName,
+      sourceDocument,
+      outputDir,
+    );
+    const metadata = await writeModelMetadata(modelName, outputDir, manifest);
 
     console.log("\n" + "=".repeat(60));
     console.log("HOTOVO!");
     console.log(`Model: ${modelName}`);
-    console.log(`Entry GLTF: ${metadata.entryFile}`);
-    console.log(`LOD varianty: ${lods.map((lod) => lod.file).join(", ")}`);
+    console.log(`Entry Stage: ${metadata.entryStage}`);
+    console.log(
+      `Overview stages: ${manifest.overview.stages.map((stage) => stage.file).join(", ")}`,
+    );
+    console.log(`Detail tiles: ${manifest.tiles.length}`);
     console.log(`Velikost: ${metadata.sizeInMB} MB`);
     console.log("=".repeat(60) + "\n");
 
     await cleanup();
     pushUploadLog(
-      `Hotovo: ${modelName}, LOD varianty ${lods.map((lod) => lod.name).join(", ")}.`,
+      `Hotovo: ${modelName}, overview stages ${manifest.overview.stages.length}, detail tiles ${manifest.tiles.length}.`,
       "done",
     );
 
@@ -722,6 +1223,7 @@ async function handleUploadModel(request) {
       modelName,
       sizeInMB: metadata.sizeInMB,
       path: metadata.entryUrl,
+      manifestUrl: metadata.manifestUrl,
       chunked: false,
       metadata,
     });
@@ -730,12 +1232,13 @@ async function handleUploadModel(request) {
     await cleanup();
 
     const clientErrors = new Set([
-      "Nebyl nahrán žádný ZIP soubor.",
-      "Nahraný soubor musí mít příponu .zip.",
-      "ZIP soubor je příliš velký.",
+      "Nebyl nahrán žádný soubor modelu.",
+      "Nahraný soubor musí mít příponu .zip nebo .glb.",
+      "Nahraný soubor je příliš velký.",
       "Upload musí být multipart/form-data.",
-      "Je povolen pouze jeden ZIP soubor.",
+      "Je povolen pouze jeden soubor modelu.",
       "Požadavek neobsahuje upload data.",
+      "Nepodporovaný vstupní formát modelu.",
     ]);
 
     pushUploadLog(
@@ -780,6 +1283,60 @@ async function handleModelMetadata(modelName) {
   }
 }
 
+async function handleStreamManifest(modelName) {
+  try {
+    const manifestContent = await fsp.readFile(
+      path.join(MODELS_DIR, modelName, "stream.manifest.json"),
+      "utf8",
+    );
+
+    return new Response(manifestContent, {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000",
+      },
+    });
+  } catch {
+    return jsonResponse(
+      {
+        success: false,
+        message: "Streaming manifest nenalezen.",
+      },
+      404,
+    );
+  }
+}
+
+async function handleStreamBootstrap(modelName) {
+  try {
+    const [metadataContent, manifestContent] = await Promise.all([
+      fsp.readFile(path.join(METADATA_DIR, `${modelName}.json`), "utf8"),
+      fsp.readFile(path.join(MODELS_DIR, modelName, "stream.manifest.json"), "utf8"),
+    ]);
+
+    const metadata = JSON.parse(metadataContent);
+    const manifest = JSON.parse(manifestContent);
+
+    return jsonResponse({
+      success: true,
+      modelName,
+      bootstrap: {
+        strategy: manifest.strategy,
+        metadata,
+        manifest,
+      },
+    });
+  } catch {
+    return jsonResponse(
+      {
+        success: false,
+        message: "Streaming bootstrap nenalezen.",
+      },
+      404,
+    );
+  }
+}
+
 function handleUploadStatus() {
   return jsonResponse({
     success: true,
@@ -791,7 +1348,7 @@ async function handleDownloadChunk(request, modelName, chunkIndex) {
   return jsonResponse(
     {
       success: false,
-      message: "Chunk endpoint je vypnutý. Backend nyní ukládá GLTF + assety pro klientský streaming.",
+      message: "Legacy chunk endpoint je vypnutý. Použij stream manifest a detail tiles z custom mesh streaming pipeline.",
       model: modelName,
       chunkIndex,
     },
@@ -819,6 +1376,12 @@ async function handleModelsList() {
         entryFile: metadata.entryFile,
         entryUrl: metadata.entryUrl,
         assetDirectory: metadata.assetDirectory,
+        manifestUrl: metadata.manifestUrl,
+        bootstrapUrl: metadata.bootstrapUrl,
+        streamingStrategy: metadata.streamingStrategy,
+        upgradeOrder: metadata.upgradeOrder || [],
+        overviewStageCount: (metadata.overviewStages || []).length,
+        tileCount: metadata.tileCount || 0,
         type: metadata.type || "gltf",
         size: metadata.size,
         sizeInMB: metadata.sizeInMB,
@@ -884,12 +1447,17 @@ async function handleModelInfo(modelName) {
         type: metadata.type || "gltf",
         entryFile: metadata.entryFile,
         entryUrl: metadata.entryUrl,
+        manifestUrl: metadata.manifestUrl,
+        bootstrapUrl: metadata.bootstrapUrl,
+        streamingStrategy: metadata.streamingStrategy,
         size: metadata.size,
         sizeInMB: metadata.sizeInMB,
         created: metadata.created || stats.birthtime,
         modified: stats.mtime,
         downloadUrl: `/download-model/${modelName}`,
         chunked: false,
+        overviewStageCount: (metadata.overviewStages || []).length,
+        tileCount: metadata.tileCount || 0,
         metadata,
       },
     });
@@ -908,7 +1476,7 @@ async function handleCreateChunks(modelName) {
   return jsonResponse(
     {
       success: false,
-      message: "Chunking je vypnutý. Backend nyní ukládá GLTF + assety pro klientský streaming.",
+      message: "Legacy chunking je vypnutý. Použij stream manifest, overview stages a detail tiles.",
       model: modelName,
     },
     400,
@@ -919,7 +1487,7 @@ async function handleCreateAllChunks() {
   return jsonResponse(
     {
       success: false,
-      message: "Chunking je vypnutý. Backend nyní ukládá GLTF + assety pro klientský streaming.",
+      message: "Legacy chunking je vypnutý. Použij stream manifest, overview stages a detail tiles.",
       results: [],
     },
     400,
@@ -967,7 +1535,7 @@ async function handleDebugChunk(modelName, chunkIndex) {
   return jsonResponse(
     {
       success: false,
-      message: "Debug chunk endpoint je vypnutý, protože chunking už není součástí pipeline.",
+      message: "Debug chunk endpoint je vypnutý, protože pipeline nyní používá overview stages a detail tiles.",
       model: modelName,
       chunkIndex,
     },
@@ -1003,6 +1571,22 @@ async function handleRequest(request) {
     segments.length === 2
   ) {
     return handleModelMetadata(decodeParam(segments[1]));
+  }
+
+  if (
+    method === "GET" &&
+    segments[0] === "stream-bootstrap" &&
+    segments.length === 2
+  ) {
+    return handleStreamBootstrap(decodeParam(segments[1]));
+  }
+
+  if (
+    method === "GET" &&
+    segments[0] === "stream-manifest" &&
+    segments.length === 2
+  ) {
+    return handleStreamManifest(decodeParam(segments[1]));
   }
 
   if (
@@ -1100,6 +1684,7 @@ function startServer(serverPort, options = {}) {
 
 console.log("\n" + "=".repeat(60));
 const httpStarted = startServer(port);
+let tlsStarted = false;
 
 if (httpStarted) {
   console.log(`HTTP Server běží na http://0.0.0.0:${port}`);
@@ -1107,7 +1692,7 @@ if (httpStarted) {
 }
 
 try {
-  const tlsStarted = startServer(httpsPort, {
+  tlsStarted = startServer(httpsPort, {
     tls: {
       key: fs.readFileSync(path.join(__dirname, "key.pem")),
       cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
@@ -1117,10 +1702,15 @@ try {
   if (tlsStarted) {
     console.log(`HTTPS Server běží na https://0.0.0.0:${httpsPort}`);
     console.log("=".repeat(60));
-  } else {
-    console.log("Server běží pouze na HTTP\n");
   }
 } catch (err) {
   console.error("HTTPS server se nepodařilo spustit:", err.message);
+}
+
+if (httpStarted && !tlsStarted) {
   console.log("Server běží pouze na HTTP\n");
+} else if (!httpStarted && tlsStarted) {
+  console.log("Server běží pouze na HTTPS\n");
+} else if (!httpStarted && !tlsStarted) {
+  console.log("Server se nepodařilo spustit na HTTP ani HTTPS\n");
 }
